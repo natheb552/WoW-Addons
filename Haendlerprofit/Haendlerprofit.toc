@@ -1,12 +1,17 @@
 ## Interface: 16001
 ## Title: Händlerprofit
-## Notes: Zeigt herstellbare Gegenstände, die sich mit Gewinn beim Händler verkaufen lassen (Preise aus Auctionator).
+## Notes: Gewinn mit festen Händlerpreisen: Rezepte, deren Ergebnis der Händler teurer abnimmt, Auktionen unter Händlerpreis und Händlerware fürs Auktionshaus.
 ## Author: Xehira
-## Version: 1.0
+## Version: 1.1
 ## OptionalDeps: Auctionator
 ## SavedVariables: HaendlerprofitDB
 ## SavedVariablesPerCharacter: HaendlerprofitCharDB
 
 Data.lua
 Core.lua
+Preisanker\Kern.lua
+Preisanker\Scan.lua
+Preisanker\Kauf.lua
+Preisanker\Haendler.lua
+Preisanker\Fenster.lua
 UI.lua

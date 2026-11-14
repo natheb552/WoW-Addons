@@ -1,7 +1,9 @@
 -- Händlerprofit: findet Rezepte, deren Ergebnis beim Händler mehr einbringt,
--- als die Materialien kosten. Materialpreise kommen aus Auctionator
--- (Auktionshaus-Scan und dort gemerkte Händlerpreise).
+-- als die Materialien kosten. Auktionspreise kommen wahlweise aus Auctionator
+-- oder aus dem eigenen Scan (Preisanker), Händlerpreise aus beiden.
 local ADDON, ns = ...
+ns.anker = ns.anker or {} -- Preisanker: Scan, Kauf und Händler (Ordner Preisanker)
+local anker = ns.anker
 local CALLER = "Haendlerprofit"
 local RECIPES = ns.RECIPES
 
@@ -40,19 +42,48 @@ local function SafeCall(f, ...)
   return nil
 end
 
+-- Woher die Auktionspreise kommen: "auctionator" oder "scan" (eigener Scan).
+-- Ohne Festlegung: Auctionator, wenn er geladen ist, sonst der eigene Scan.
+function ns.PriceSource()
+  if ns.db and ns.db.priceSource then return ns.db.priceSource end
+  return AuctionatorAPI() and "auctionator" or "scan"
+end
+
+-- Preis, zu dem ein Händler den Gegenstand verkauft: der günstigere aus Auctionator
+-- und den selbst gelernten Händlern (nur Ware mit unbegrenztem Vorrat).
+local function VendorPrice(itemID)
+  local api = AuctionatorAPI()
+  local price = api and SafeCall(api.GetVendorPriceByItemID, CALLER, itemID)
+  if price and price <= 0 then price = nil end
+  local own = anker.db and anker.db.haendler[itemID]
+  if own and own.p > 0 and (own.n or -1) < 0 and (not price or own.p < price) then price = own.p end
+  return price
+end
+
+-- Billigster Auktionspreis und sein Alter in Tagen aus der gewählten Quelle.
+local function AuctionPrice(itemID)
+  if ns.PriceSource() == "scan" then
+    local price = anker.db and anker.db.preise[itemID]
+    if price and price > 0 then return price, 0 end
+    return nil
+  end
+  local api = AuctionatorAPI()
+  local price = api and SafeCall(api.GetAuctionPriceByItemID, CALLER, itemID)
+  if price and price > 0 then
+    return price, SafeCall(api.GetAuctionAgeByItemID, CALLER, itemID) or 0
+  end
+  return nil
+end
+
 -- Kaufpreis pro Stück: der günstigere aus Händler und Auktionshaus.
 -- Rückgabe: Preis, Alter in Tagen, Quelle ("H" Händler, "AH")
 local function BuyPrice(itemID)
-  local api = AuctionatorAPI()
-  if not api then return nil end
-  local vendor = SafeCall(api.GetVendorPriceByItemID, CALLER, itemID)
-  local auction = SafeCall(api.GetAuctionPriceByItemID, CALLER, itemID)
-  if vendor and vendor <= 0 then vendor = nil end
-  if auction and auction <= 0 then auction = nil end
+  local vendor = VendorPrice(itemID)
+  local auction, age = AuctionPrice(itemID)
   if vendor and (not auction or vendor <= auction) then
     return vendor, 0, "H"
   elseif auction then
-    return auction, SafeCall(api.GetAuctionAgeByItemID, CALLER, itemID) or 0, "AH"
+    return auction, age, "AH"
   end
   return nil
 end
@@ -84,8 +115,9 @@ local function ItemData(itemID)
 end
 ns.ItemData = ItemData
 
--- Zeitpunkt des letzten Auctionator-Scans (Sekunden), nil wenn unbekannt
+-- Zeitpunkt des letzten Scans der gewählten Preisquelle (Sekunden), nil wenn unbekannt
 function ns.LastScanTime()
+  if ns.PriceSource() == "scan" then return anker.db and anker.db.preisZeit end
   local state = (Auctionator and Auctionator.SavedState) or AUCTIONATOR_SAVEDVARS
   if type(state) ~= "table" then return nil end
   local latest
@@ -100,6 +132,7 @@ end
 -- dem Tag des Spielstarts. Ein Preis gilt deshalb als aktuell, wenn er höchstens
 -- einen Tag älter ist als der letzte Scan.
 local function FreshLimit()
+  if ns.PriceSource() == "scan" then return 0 end -- alle Preise stammen aus demselben Scan
   local last = ns.LastScanTime()
   if not last then return 0 end
   local day0 = (Auctionator.Constants and Auctionator.Constants.SCAN_DAY_0) or 1577833200
@@ -296,6 +329,13 @@ local function RefreshUI()
   if ns.Refresh then ns.Refresh() end
 end
 
+-- Der eigene Scan ist fertig: Liste neu rechnen.
+function anker.NachScan()
+  if ns.PriceSource() ~= "scan" then return end
+  RefreshUI()
+  Announce()
+end
+
 local frame = CreateFrame("Frame")
 local function TryRegister(event)
   pcall(frame.RegisterEvent, frame, event)
@@ -322,13 +362,14 @@ frame:SetScript("OnEvent", function(_, event, arg1, arg2)
     local api = AuctionatorAPI()
     if api and api.RegisterForDBUpdate then
       pcall(api.RegisterForDBUpdate, CALLER, function()
+        if ns.PriceSource() ~= "auctionator" then return end
         Debounce("db", 3, function()
           RefreshUI()
           Announce()
         end)
       end)
-    else
-      Print("Auctionator wurde nicht gefunden. Ohne Auctionator gibt es keine Preise.")
+    elseif ns.PriceSource() == "auctionator" then
+      Print("Auctionator wurde nicht gefunden. Stelle im Fenster (/hp) die Preise auf »eigener Scan« um.")
     end
   elseif event == "GET_ITEM_INFO_RECEIVED" then
     -- Nur reagieren, wenn ein von uns angefragter Gegenstand wirklich geladen wurde

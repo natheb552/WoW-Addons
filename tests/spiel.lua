@@ -1,5 +1,5 @@
 -- Nachgebaute Spiel-API für Tests außerhalb von WoW (Lua 5.1).
--- Bildet nur nach, was Preisanker benutzt: Uhr und Timer, Rahmen, Auktionshaus mit Drossel,
+-- Bildet nur nach, was Händlerprofit mit Preisanker benutzt: Uhr und Timer, Rahmen, Auktionshaus mit Drossel,
 -- Gegenstandsdaten mit verzögertem Laden, Händler und Taschen.
 
 local S = { jetzt = 1000, timer = {}, rahmen = {}, ausgabe = {}, gesendet = {} }
@@ -64,6 +64,12 @@ function Rahmen:SetEnabled(an) self.an = an end
 function Rahmen:IsEnabled() return self.an end
 function Rahmen:CreateTexture() return setmetatable({ skripte = {}, ereignisse = {} }, Rahmen) end
 function Rahmen:CreateFontString() return setmetatable({ skripte = {}, ereignisse = {} }, Rahmen) end
+function Rahmen:SetSize(b, h) self.breite, self.hoehe = b, h end
+function Rahmen:SetWidth(b) self.breite = b end
+function Rahmen:SetHeight(h) self.hoehe = h end
+function Rahmen:GetWidth() return rawget(self, "breite") or 660 end
+function Rahmen:GetHeight() return rawget(self, "hoehe") or 400 end
+function Rahmen:GetSize() return self:GetWidth(), self:GetHeight() end
 function Rahmen:Click() if self.skripte.OnClick then self.skripte.OnClick(self, "LeftButton") end end
 
 function CreateFrame(_, name)
@@ -87,6 +93,7 @@ for _, e in ipairs({
   "ITEM_DATA_LOAD_RESULT", "COMMODITY_PRICE_UPDATED", "COMMODITY_PRICE_UNAVAILABLE",
   "COMMODITY_PURCHASE_SUCCEEDED", "COMMODITY_PURCHASE_FAILED", "AUCTION_HOUSE_PURCHASE_COMPLETED",
   "AUCTION_HOUSE_SHOW_ERROR", "MERCHANT_SHOW", "MERCHANT_UPDATE", "MERCHANT_CLOSED",
+  "PLAYER_LOGIN", "TRADE_SKILL_SHOW", "TRADE_SKILL_UPDATE", "NEW_RECIPE_LEARNED",
 }) do S.bekannt[e] = true end
 
 UIParent = CreateFrame("Frame")
@@ -101,6 +108,7 @@ function print(...)
   for i = 1, select("#", ...) do teile[i] = tostring((select(i, ...))) end
   S.ausgabe[#S.ausgabe + 1] = table.concat(teile, " ")
 end
+DEFAULT_CHAT_FRAME = { AddMessage = function(_, text) print(text) end }
 function GetBuildInfo() return "1.60.1", "70938", "Nov 12 2026", 16001 end
 function UnitName() return S.npc or "Testhändler" end
 function GetRealZoneText() return "Testzone" end

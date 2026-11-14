@@ -1,13 +1,23 @@
--- Test von Preisanker gegen die nachgebaute Spiel-API.  Aufruf: lua5.1 tests/test.lua  (aus wow-addons/)
+-- Test von Händlerprofit (mit Preisanker) gegen die nachgebaute Spiel-API.
+-- Aufruf: lua5.1 tests/test.lua  (aus wow-addons/)
 
 local echo = print
 package.path = "tests/?.lua;" .. package.path
 local S = require("spiel")
 
-local ns = {}
-for _, datei in ipairs({ "Kern", "Scan", "Kauf", "Haendler", "Fenster" }) do
-  assert(loadfile("Preisanker/" .. datei .. ".lua"))("Preisanker", ns)
+-- Statt Data.lua: zwei Rezepte. [Zauber] = { Item, Anzahl, Beruf, Reagenz, Menge, ... }
+local hp = {
+  RECIPES = {
+    [9001] = { 400, 1, 165, 100, 4 },         -- Lederweste aus 4 Leichtem Leder
+    [9002] = { 401, 1, 165, 100, 2, 300, 1 }, -- Lederband aus 2 Leder und 1 Faden (Händlerware)
+  },
+  COOLDOWNS = {},
+}
+for _, datei in ipairs({ "Core", "Preisanker/Kern", "Preisanker/Scan", "Preisanker/Kauf",
+    "Preisanker/Haendler", "Preisanker/Fenster", "UI" }) do
+  assert(loadfile("Haendlerprofit/" .. datei .. ".lua"))("Haendlerprofit", hp)
 end
+local ns = hp.anker -- Preisanker
 
 local fehler, geprueft = 0, 0
 local function gleich(ist, soll, was)
@@ -77,6 +87,8 @@ S.dinge = {
             verkaufNachName = { ["Banditenhandschuhe des Affen"] = 1200 } },
   [300] = { name = "Feiner Faden", verkauf = 25, stapel = 20 },  -- Händlerware
   [301] = { name = "Rezept: Trank", verkauf = 100 },             -- Händlerware, begrenzt
+  [400] = { name = "Lederweste", verkauf = 100 },                -- herstellbar (Rezept 9001)
+  [401] = { name = "Lederband", verkauf = 150 },                 -- herstellbar (Rezept 9002)
 }
 local function Schluessel(itemID, suffix) return { itemID = itemID, itemLevel = 10, itemSuffix = suffix or 0, battlePetSpeciesID = 0 } end
 S.markt = {
@@ -103,8 +115,11 @@ end
 
 S.Ereignis("ADDON_LOADED", "AnderesAddon")
 gleich(ns.db, nil, "fremdes ADDON_LOADED ignoriert")
-S.Ereignis("ADDON_LOADED", "Preisanker")
-gleich(type(PreisankerDB.vk), "table", "Datenbank angelegt")
+S.Ereignis("ADDON_LOADED", "Haendlerprofit")
+S.Ereignis("PLAYER_LOGIN")
+gleich(type(HaendlerprofitDB.anker.vk), "table", "Datenbank angelegt")
+gleich(hp.PriceSource(), "scan", "ohne Auctionator: eigener Scan als Preisquelle")
+HaendlerprofitDB.onlyKnown = false -- im Test ist kein Rezept gelernt
 gleich(ns.opt.minGewinn, 100, "Standardwert sichtbar")
 
 S.haendler = {
@@ -126,8 +141,10 @@ SlashCmdList.PREISANKER("scan")
 gleich(gesagt("Erst das Auktionshaus öffnen"), true, "Scan ohne Auktionshaus abgelehnt")
 
 S.Ereignis("AUCTION_HOUSE_SHOW")
-gleich(PreisankerFenster:IsShown(), true, "Fenster öffnet mit dem Auktionshaus")
-PreisankerFenster.scanKnopf:Click()
+gleich(hp.IsShown(), true, "Fenster öffnet mit dem Auktionshaus")
+gleich(HaendlerprofitPreisanker:IsShown(), true, "Reiter Unter Händlerpreis gewählt")
+gleich(#hp.Compute(true), 0, "vor dem Scan: keine Preise, kein Rezept")
+HaendlerprofitPreisanker.scanKnopf:Click()
 gleich(ns.scan ~= nil, true, "Scan läuft")
 S.Warten(3)
 gleich(ns.zahl.zeilen, 1207, "alle Zeilen aus drei Seiten gelesen")
@@ -167,6 +184,45 @@ end
 S.Warten(0.2)
 SlashCmdList.PREISANKER("info")
 SlashCmdList.PREISANKER("hilfe")
+
+---------------------------------------------------------------- Herstellen mit Preisen des eigenen Scans
+
+gleich(ns.db.preise[100], 10, "billigster Auktionspreis gemerkt")
+hp.Compute(true) -- fordert die Gegenstandsdaten an
+S.Warten(0.5)
+local rezepte = hp.Compute(true)
+gleich(#rezepte, 2, "zwei Rezepte mit Händlergewinn")
+gleich(rezepte[1].itemID, 400, "Lederweste zuerst")
+gleich(rezepte[1].cost, 40, "Lederweste: 4 Leder zum Scan-Preis")
+gleich(rezepte[1].profit, 60, "Lederweste Gewinn")
+gleich(rezepte[2].profit, 30, "Lederband Gewinn")
+gleich(rezepte[2].parts[2].source, "H", "Faden vom gelernten Händler (billiger als Auktion)")
+gleich(rezepte[1].stale, false, "Scan-Preise gelten als aktuell")
+
+-- Reiter wechseln zeichnet beide Teile ohne Fehler
+hp.SelectTab(1)
+gleich(HaendlerprofitPreisanker:IsShown(), false, "Reiter Herstellen: Preisanker-Listen verborgen")
+S.Warten(0.5)
+hp.SelectTab(3)
+S.Warten(0.2)
+SlashCmdList.HAENDLERPROFIT()
+gleich(hp.IsShown(), false, "/hp schließt das Fenster")
+SlashCmdList.PREISANKER("")
+gleich(HaendlerprofitPreisanker:IsShown(), true, "/pa öffnet die Preisanker-Liste")
+hp.SelectTab(2)
+
+-- Preisquelle Auctionator: Auktionspreise kommen von dort, Händlerpreise weiter aus beiden
+Auctionator = { API = { v1 = {
+  GetAuctionPriceByItemID = function(_, itemID) return itemID == 100 and 20 or nil end,
+  GetVendorPriceByItemID = function() return nil end,
+  GetAuctionAgeByItemID = function() return 0 end,
+} } }
+HaendlerprofitDB.priceSource = "auctionator"
+rezepte = hp.Compute(true)
+gleich(#rezepte, 2, "Auctionator: zwei Rezepte")
+gleich(rezepte[1].cost, 80, "Auctionator: Lederweste zum Auctionator-Preis")
+gleich(rezepte[2].cost, 140, "Auctionator: Faden weiter vom gelernten Händler")
+Auctionator, HaendlerprofitDB.priceSource = nil, nil
 
 ---------------------------------------------------------------- Kauf Handelsware
 
@@ -294,7 +350,7 @@ S.Warten(1)
 gleich(S.geld, geldVorher - 1000, "mit auto: ein Klick kauft")
 
 SlashCmdList.PREISANKER("min 2s")
-gleich(PreisankerDB.opt.minGewinn, 200, "Einstellung gespeichert")
+gleich(HaendlerprofitDB.anker.opt.minGewinn, 200, "Einstellung gespeichert")
 S.Warten(1)
 
 echo(("%d Prüfungen, %d Fehler"):format(geprueft, fehler))

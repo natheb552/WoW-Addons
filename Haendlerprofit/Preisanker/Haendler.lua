@@ -3,7 +3,9 @@
 --              Daraus entsteht die Liste »Händlerware«, ohne dass eine Datenbank nötig ist.
 --   Verkaufen: Ein Knopf am Händlerfenster verkauft, was über Preisanker ersteigert wurde.
 
-local ADDON, ns = ...
+local ADDON, hp = ...
+hp.anker = hp.anker or {}
+local ns = hp.anker -- eigener Namensraum im Addon Händlerprofit
 
 -- Werte, die das Spiel im Kampf unlesbar macht, nicht anfassen.
 local function Klar(wert)

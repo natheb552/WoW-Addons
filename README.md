@@ -2,19 +2,20 @@
 
 Addons für WoW Forever (Interface 16001).
 
-## Preisanker
-
-Findet im Auktionshaus Auktionen unter dem Händlerpreis (kaufen, beim NPC-Händler verkaufen)
-und Händlerware, die im Auktionshaus teurer ist als beim Händler.
-Einbau und Bedienung: [Preisanker/LIESMICH.txt](Preisanker/LIESMICH.txt).
-
-Stand 14.11.2026: nur gegen eine nachgebaute Spiel-API getestet, noch nicht im echten Spiel gelaufen.
-
 ## Händlerprofit
 
-Zeigt herstellbare Gegenstände, die sich mit Gewinn beim Händler verkaufen lassen.
-Materialpreise kommen aus Auctionator (optional). Fenster öffnen mit `/hp`.
-Einbau: den Ordner `Haendlerprofit` nach `World of Warcraft\_forever_\Interface\AddOns\` kopieren.
+Gewinn mit festen Händlerpreisen, ein Fenster (`/hp`) mit drei Reitern:
+
+- **Herstellen:** Rezepte, deren Ergebnis der Händler teurer abnimmt, als die Materialien kosten.
+  Auktionspreise kommen wahlweise aus Auctionator (optional) oder aus dem eigenen Scan.
+- **Unter Händlerpreis:** Auktionen unter dem Händlerpreis (kaufen, beim NPC-Händler verkaufen).
+- **Händlerware:** Ware, die im Auktionshaus teurer ist als beim Händler.
+
+Die beiden letzten Reiter und der eigene Scan sind das frühere Addon Preisanker; sein Code liegt in
+`Haendlerprofit/Preisanker`. Einbau und Bedienung: [Haendlerprofit/LIESMICH.txt](Haendlerprofit/LIESMICH.txt).
+
+Stand 14.11.2026: der Preisanker-Teil und das gemeinsame Fenster sind nur gegen eine nachgebaute
+Spiel-API getestet.
 
 ## Test
 

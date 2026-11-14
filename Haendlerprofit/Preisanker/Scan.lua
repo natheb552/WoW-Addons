@@ -3,7 +3,9 @@
 --   2. Händlerpreise der gefundenen Gegenstände laden (einmalig, danach gemerkt).
 --   3. Jeden Kandidaten einzeln nachschlagen, um die echten Lose und Mengen zu sehen.
 
-local ADDON, ns = ...
+local ADDON, hp = ...
+hp.anker = hp.anker or {}
+local ns = hp.anker -- eigener Namensraum im Addon Händlerprofit
 local AH = C_AuctionHouse
 
 local SUCH_ABSTAND = 0.75 -- s zwischen Einzelsuchen; Blizzard erlaubt 100 Suchen je Minute
@@ -47,19 +49,20 @@ function ns.Neu() ns.schmutzig = true end
 
 ns.Bei("ADDON_LOADED", function(name)
   if name ~= ADDON then return end
-  PreisankerDB = PreisankerDB or {}
-  local db = PreisankerDB
+  HaendlerprofitDB = HaendlerprofitDB or {}
+  HaendlerprofitDB.anker = HaendlerprofitDB.anker or {}
+  local db = HaendlerprofitDB.anker
   db.opt = db.opt or {}
   db.vk = db.vk or {}             -- itemID → Preis, den Händler zahlen
   db.haendler = db.haendler or {} -- itemID → Ware, die ein Händler verkauft
   db.offen = db.offen or {}       -- gekauft, noch nicht beim Händler verkauft
   db.bilanz = db.bilanz or { ausgegeben = 0, erloest = 0 }
+  db.preise = db.preise or {}     -- itemID → billigster Auktionspreis aus dem letzten eigenen Scan
   -- Händlerpreise können sich mit einem Patch ändern: dann neu laden.
   local build = select(2, GetBuildInfo())
   if db.vkBuild ~= build then db.vk, db.vkBuild = {}, build end
   ns.db = db
   ns.opt = setmetatable(db.opt, { __index = ns.standard })
-  if ns.FensterBauen then ns.FensterBauen() end
 end)
 
 ---------------------------------------------------------------- Senden mit Drossel
@@ -228,6 +231,11 @@ local function Auswerten()
     end
   end
 
+  -- Die Preise bleiben gespeichert: der Reiter »Herstellen« rechnet damit Materialkosten.
+  local preise = {}
+  for itemID, b in pairs(billigst) do preise[itemID] = b.preis end
+  ns.db.preise, ns.db.preisZeit = preise, time()
+
   local ware = {}
   for itemID, h in pairs(ns.db.haendler) do
     local b = billigst[itemID]
@@ -261,6 +269,7 @@ local function Auswerten()
   -- Das Spiel soll die Kandidaten schon einmal laden, bevor die Einzelsuche sie braucht.
   for i = 1, math.min(#folge, 200) do AH.GetItemKeyInfo(folge[i].key) end
   ns.Neu()
+  if ns.NachScan then ns.NachScan() end
 end
 
 local function PreiseLaden()

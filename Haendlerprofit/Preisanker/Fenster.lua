@@ -1,10 +1,12 @@
--- Preisanker: Fenster mit zwei Listen und die Befehle /preisanker und /pa.
+-- Preisanker: zwei Listen als Reiter im Händlerprofit-Fenster und die Befehle /preisanker und /pa.
 
-local ADDON, ns = ...
+local ADDON, hp = ...
+hp.anker = hp.anker or {}
+local ns = hp.anker -- eigener Namensraum im Addon Händlerprofit
 
-local ZEILEN = 14
 local ZEILENHOEHE = 22
-local BREITE = 660
+local BREITE = 660          -- Fensterbreite, für die die Spalten ausgelegt sind
+local OBEN, UNTEN = 84, 30  -- Platz über und unter den Zeilen
 
 -- Spalten je Liste: Titel, Breite, Ausrichtung. Die letzte Spalte der ersten Liste ist der Knopf.
 local SPALTEN = {
@@ -20,9 +22,11 @@ local KNOPF = { -- Zustand → Beschriftung, anklickbar
   offen = { "wartet", false }, laeuft = { "prüft...", false }, gekauft = { "gekauft", false },
 }
 
-local fenster, zeilen, kopf, statusText, fussText, reiter
+local fenster, kopf, statusText, fussText
+local zeilen = {}
 local liste = {}
 local blatt, versatz = 1, 0
+local Zeile -- legt Zeilen bei Bedarf an (weiter unten)
 
 local function Grau(text) return "|cff808080" .. text .. "|r" end
 local function Gruen(text) return "|cff40ff40" .. text .. "|r" end
@@ -109,49 +113,60 @@ end
 
 local function Zeichnen()
   ListeBauen()
-  versatz = math.max(0, math.min(versatz, #liste - ZEILEN))
-  for i = 1, ZEILEN do
-    local e = liste[i + versatz]
-    if e then ZeileFuellen(zeilen[i], e) else zeilen[i]:Hide() end
+  -- So viele Zeilen, wie in die aktuelle Fensterhöhe passen.
+  local sichtbar = math.max(1, math.floor(((fenster:GetHeight() or 0) - OBEN - UNTEN) / ZEILENHOEHE))
+  versatz = math.max(0, math.min(versatz, #liste - sichtbar))
+  for i = 1, math.max(sichtbar, #zeilen) do
+    local e = i <= sichtbar and liste[i + versatz]
+    if e then ZeileFuellen(Zeile(i), e) elseif zeilen[i] then zeilen[i]:Hide() end
   end
   statusText:SetText(StatusZeile())
   local b = ns.db.bilanz
   local fuss = ("Bilanz: ausgegeben %s, beim Händler erlöst %s"):format(ns.Geld(b.ausgegeben), ns.Geld(b.erloest))
   local offen = ns.OffeneTeile()
   if offen > 0 then fuss = fuss .. (" · noch zu verkaufen: %d Teile"):format(offen) end
-  if #liste > ZEILEN then
-    fuss = fuss .. (" · Zeile %d-%d von %d (Mausrad)"):format(versatz + 1, math.min(versatz + ZEILEN, #liste), #liste)
+  if #liste > sichtbar then
+    fuss = fuss .. (" · Zeile %d-%d von %d (Mausrad)"):format(versatz + 1, math.min(versatz + sichtbar, #liste), #liste)
   end
   fussText:SetText(fuss)
-  reiter[1]:SetEnabled(blatt ~= 1)
-  reiter[2]:SetEnabled(blatt ~= 2)
   fenster.scanKnopf:SetEnabled(ns.ahOffen and not ns.scan and not ns.kauf and true or false)
 end
 
-local function SpaltenSetzen()
+-- Richtet die Zellen einer Zeile (oder des Kopfs) nach den Spalten der gewählten Liste aus.
+-- Die Namensspalte bekommt die Breite, um die das Fenster breiter ist als ausgelegt.
+local function SpaltenFuer(ziel)
   local spalten = SPALTEN[blatt]
-  for _, ziel in ipairs({ kopf, unpack(zeilen) }) do
-    local x = 28
-    for i = 1, 6 do
-      local zelle, spalte = ziel.zellen[i], spalten[i]
-      if spalte then
-        zelle:ClearAllPoints()
-        zelle:SetPoint("LEFT", ziel, "LEFT", x, 0)
-        zelle:SetWidth(spalte[2])
-        zelle:SetJustifyH(spalte[3])
-        zelle:Show()
-        if ziel == kopf then zelle:SetText(spalte[1]) end
-        x = x + spalte[2] + 6
-      else
-        zelle:Hide()
-      end
+  local mehr = math.max(0, (fenster:GetWidth() or BREITE) - BREITE)
+  local x = 28
+  for i = 1, 6 do
+    local zelle, spalte = ziel.zellen[i], spalten[i]
+    if spalte then
+      local breite = spalte[2] + (i == 1 and mehr or 0)
+      zelle:ClearAllPoints()
+      zelle:SetPoint("LEFT", ziel, "LEFT", x, 0)
+      zelle:SetWidth(breite)
+      zelle:SetJustifyH(spalte[3])
+      zelle:Show()
+      if ziel == kopf then zelle:SetText(spalte[1]) end
+      x = x + breite + 6
+    else
+      zelle:Hide()
     end
   end
 end
 
-local function BlattWaehlen(nummer)
-  blatt, versatz = nummer, 0
+local function SpaltenSetzen()
+  SpaltenFuer(kopf)
+  for _, zeile in ipairs(zeilen) do SpaltenFuer(zeile) end
+end
+
+-- Zeigt die Liste mit dieser Nummer (1 Unter Händlerpreis, 2 Händlerware); nil verbirgt beide.
+function ns.BlattZeigen(nummer)
+  if not fenster then return end
+  if not nummer then return fenster:Hide() end
+  if nummer ~= blatt then blatt, versatz = nummer, 0 end
   SpaltenSetzen()
+  fenster:Show()
   ns.Neu()
 end
 
@@ -198,105 +213,74 @@ local function Tipp(zeile)
   GameTooltip:Show()
 end
 
-function ns.FensterBauen()
+function Zeile(i)
+  local zeile = zeilen[i]
+  if zeile then return zeile end
+  zeile = CreateFrame("Button", nil, fenster)
+  zeile:SetPoint("TOPLEFT", 8, -OBEN - (i - 1) * ZEILENHOEHE)
+  zeile:SetPoint("TOPRIGHT", -8, -OBEN - (i - 1) * ZEILENHOEHE)
+  zeile:SetHeight(ZEILENHOEHE)
+  local streifen = zeile:CreateTexture(nil, "BACKGROUND")
+  streifen:SetAllPoints()
+  streifen:SetColorTexture(1, 1, 1, i % 2 == 0 and 0.04 or 0)
+  local leuchten = zeile:CreateTexture(nil, "HIGHLIGHT")
+  leuchten:SetAllPoints()
+  leuchten:SetColorTexture(1, 0.82, 0, 0.12)
+  zeile.bild = zeile:CreateTexture(nil, "ARTWORK")
+  zeile.bild:SetSize(18, 18)
+  zeile.bild:SetPoint("LEFT", 4, 0)
+  zeile.zellen = Zellen(zeile, "GameFontHighlightSmall")
+  zeile.knopf = CreateFrame("Button", nil, zeile, "UIPanelButtonTemplate")
+  zeile.knopf:SetSize(100, 20)
+  zeile.knopf:SetPoint("RIGHT", -4, 0)
+  zeile.knopf:SetScript("OnClick", function()
+    if zeile.eintrag then ns.Kaufen(zeile.eintrag) end
+  end)
+  zeile:RegisterForClicks("LeftButtonUp")
+  zeile:SetScript("OnEnter", Tipp)
+  zeile:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  zeile:SetScript("OnClick", function(self)
+    local e = self.eintrag
+    if not e then return end
+    -- Umschalt-Klick stellt den Link in den Chat, ein einfacher Klick sucht im Auktionshaus.
+    if e.link and HandleModifiedItemClick(e.link) then return end
+    ImAuktionshausSuchen(e.name)
+  end)
+  zeilen[i] = zeile
+  SpaltenFuer(zeile)
+  return zeile
+end
+
+-- Baut die Listen als Rahmen im Händlerprofit-Fenster, unter dessen Titel und Reitern.
+function ns.FensterBauen(eltern)
   if fenster then return end
-  local f = CreateFrame("Frame", "PreisankerFenster", UIParent)
+  local f = CreateFrame("Frame", "HaendlerprofitPreisanker", eltern)
   fenster = f
-  f:SetSize(BREITE, 96 + ZEILEN * ZEILENHOEHE + 30)
-  f:SetPoint("CENTER")
-  f:SetFrameStrata("HIGH")
-  f:SetToplevel(true)
-  f:SetClampedToScreen(true)
-  f:EnableMouse(true)
-  f:SetMovable(true)
-  f:RegisterForDrag("LeftButton")
-  f:SetScript("OnDragStart", f.StartMoving)
-  f:SetScript("OnDragStop", f.StopMovingOrSizing)
+  f:SetPoint("TOPLEFT", eltern, "TOPLEFT", 0, -26)
+  f:SetPoint("BOTTOMRIGHT", eltern, "BOTTOMRIGHT", 0, 0)
   f:Hide()
-  tinsert(UISpecialFrames, "PreisankerFenster") -- schließt mit Esc
-
-  local grund = f:CreateTexture(nil, "BACKGROUND")
-  grund:SetAllPoints()
-  grund:SetColorTexture(0.06, 0.06, 0.08, 0.94)
-  local leiste = f:CreateTexture(nil, "BORDER")
-  leiste:SetPoint("TOPLEFT")
-  leiste:SetPoint("TOPRIGHT")
-  leiste:SetHeight(26)
-  leiste:SetColorTexture(0.16, 0.13, 0.05, 1)
-
-  local titel = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-  titel:SetPoint("TOPLEFT", 10, -7)
-  titel:SetText("Preisanker")
-
-  local zu = CreateFrame("Button", nil, f, "UIPanelCloseButton")
-  zu:SetPoint("TOPRIGHT", 2, 2)
-
-  reiter = {}
-  for i, text in ipairs({ "Unter Händlerpreis", "Händlerware" }) do
-    local r = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    r:SetSize(150, 22)
-    r:SetPoint("TOPLEFT", 8 + (i - 1) * 154, -32)
-    r:SetText(text)
-    r:SetScript("OnClick", function() BlattWaehlen(i) end)
-    reiter[i] = r
-  end
 
   f.scanKnopf = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
   f.scanKnopf:SetSize(110, 22)
-  f.scanKnopf:SetPoint("TOPRIGHT", -8, -32)
+  f.scanKnopf:SetPoint("TOPRIGHT", -12, -34)
   f.scanKnopf:SetText("Scannen")
   f.scanKnopf:SetScript("OnClick", function() ns.ScanStarten() end)
 
   statusText = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  statusText:SetPoint("TOPLEFT", 10, -60)
-  statusText:SetPoint("TOPRIGHT", -10, -60)
+  statusText:SetPoint("TOPLEFT", 14, -39)
+  statusText:SetPoint("TOPRIGHT", -130, -39)
   statusText:SetJustifyH("LEFT")
   statusText:SetWordWrap(false)
 
   kopf = CreateFrame("Frame", nil, f)
-  kopf:SetPoint("TOPLEFT", 4, -76)
-  kopf:SetPoint("TOPRIGHT", -4, -76)
+  kopf:SetPoint("TOPLEFT", 8, -64)
+  kopf:SetPoint("TOPRIGHT", -8, -64)
   kopf:SetHeight(18)
   kopf.zellen = Zellen(kopf, "GameFontNormalSmall")
 
-  zeilen = {}
-  for i = 1, ZEILEN do
-    local zeile = CreateFrame("Button", nil, f)
-    zeile:SetPoint("TOPLEFT", 4, -96 - (i - 1) * ZEILENHOEHE)
-    zeile:SetPoint("TOPRIGHT", -4, -96 - (i - 1) * ZEILENHOEHE)
-    zeile:SetHeight(ZEILENHOEHE)
-    local streifen = zeile:CreateTexture(nil, "BACKGROUND")
-    streifen:SetAllPoints()
-    streifen:SetColorTexture(1, 1, 1, i % 2 == 0 and 0.04 or 0)
-    local leuchten = zeile:CreateTexture(nil, "HIGHLIGHT")
-    leuchten:SetAllPoints()
-    leuchten:SetColorTexture(1, 0.82, 0, 0.12)
-    zeile.bild = zeile:CreateTexture(nil, "ARTWORK")
-    zeile.bild:SetSize(18, 18)
-    zeile.bild:SetPoint("LEFT", 4, 0)
-    zeile.zellen = Zellen(zeile, "GameFontHighlightSmall")
-    zeile.knopf = CreateFrame("Button", nil, zeile, "UIPanelButtonTemplate")
-    zeile.knopf:SetSize(100, 20)
-    zeile.knopf:SetPoint("RIGHT", -4, 0)
-    zeile.knopf:SetScript("OnClick", function()
-      if zeile.eintrag then ns.Kaufen(zeile.eintrag) end
-    end)
-    zeile:RegisterForClicks("LeftButtonUp")
-    zeile:SetScript("OnEnter", Tipp)
-    zeile:SetScript("OnLeave", function() GameTooltip:Hide() end)
-    zeile:SetScript("OnClick", function(self)
-      local e = self.eintrag
-      if not e then return end
-      -- Umschalt-Klick stellt den Link in den Chat, ein einfacher Klick sucht im Auktionshaus.
-      if e.link and HandleModifiedItemClick(e.link) then return end
-      ImAuktionshausSuchen(e.name)
-    end)
-    zeilen[i] = zeile
-  end
-
   fussText = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  fussText:SetPoint("BOTTOMLEFT", 10, 9)
-  fussText:SetPoint("BOTTOMRIGHT", -10, 9)
+  fussText:SetPoint("BOTTOMLEFT", 14, 11)
+  fussText:SetPoint("BOTTOMRIGHT", -26, 11)
   fussText:SetJustifyH("LEFT")
   fussText:SetWordWrap(false)
 
@@ -306,6 +290,10 @@ function ns.FensterBauen()
     ns.Neu()
   end)
   f:SetScript("OnShow", ns.Neu)
+  f:SetScript("OnSizeChanged", function()
+    SpaltenSetzen()
+    ns.Neu()
+  end)
   f:SetScript("OnUpdate", function()
     if ns.schmutzig then
       ns.schmutzig = false
@@ -316,22 +304,23 @@ function ns.FensterBauen()
   SpaltenSetzen()
 end
 
+-- Öffnet oder schließt das Händlerprofit-Fenster mit der zuletzt gezeigten Preisanker-Liste.
 function ns.FensterZeigen(an)
-  if not fenster then return end
-  if an == nil then an = not fenster:IsShown() end
-  fenster:SetShown(an)
+  local offen = hp.IsShown() and fenster and fenster:IsShown()
+  if an == nil then an = not offen end
+  if an then hp.Open(blatt + 1) else hp.Close() end
 end
 
--- Beim ersten Öffnen neben das Auktionshaus setzen; danach bleibt es, wo der Spieler es hinzieht.
+-- Mit dem Auktionshaus öffnen; beim ersten Mal daneben setzen, danach bleibt das Fenster,
+-- wo der Spieler es hinzieht. Ein schon offenes Fenster bleibt, wie es ist.
 local angedockt
 function ns.AuktionshausAuf()
-  if not (fenster and ns.opt.mitAuktionshaus) then return end
+  if not ns.opt.mitAuktionshaus or hp.IsShown() then return end
+  hp.Open(blatt + 1)
   if not angedockt and AuctionHouseFrame then
     angedockt = true
-    fenster:ClearAllPoints()
-    fenster:SetPoint("TOPLEFT", AuctionHouseFrame, "TOPRIGHT", 6, 0)
+    hp.Dock(AuctionHouseFrame)
   end
-  fenster:Show()
 end
 
 ---------------------------------------------------------------- Befehle

@@ -1,5 +1,8 @@
--- Händlerprofit: Fenster mit der Liste (öffnen mit /hp)
+-- Händlerprofit: Fenster mit drei Reitern (öffnen mit /hp).
+--   Herstellen:         Rezepte mit Händlergewinn (dieser Teil).
+--   Unter Händlerpreis, Händlerware: die Listen von Preisanker (Preisanker\Fenster.lua).
 local ADDON, ns = ...
+local anker = ns.anker
 
 local MIN_WIDTH, MIN_HEIGHT = 660, 300
 local ROW_HEIGHT, MAX_ROWS = 24, 200
@@ -8,8 +11,13 @@ local COLS = { skill = 110, cost = 90, sell = 90, profit = 95 }
 local COL_ORDER = { "name", "skill", "cost", "sell", "profit" }
 local GOLD = { 1, 0.82, 0 }
 
-local window, content, scroll, slider, header, emptyText, summaryText, scanText, statusText
-local rows, checks = {}, {}
+local TABS = { "Herstellen", "Unter Händlerpreis", "Händlerware" }
+
+local window, craft, content, scroll, slider, header, emptyText, summaryText, scanText, statusText
+local sourceButton, scanButton
+local UpdateScanControls -- weiter unten
+local rows, checks, tabs = {}, {}, {}
+local tab = 1
 local filterButton, filterMenu, filterEntries = nil, nil, {}
 
 -- ---------------------------------------------------------------- Bausteine
@@ -41,6 +49,22 @@ local function Text(parent, font, justify)
   fs:SetJustifyH(justify or "LEFT")
   if fs.SetWordWrap then fs:SetWordWrap(false) end
   return fs
+end
+
+-- Flacher Knopf im Stil des Fensters, mit Beschriftung in .label
+local function FlatButton(parent, width, label, justify)
+  local b = CreateFrame("Button", nil, parent)
+  b:SetSize(width, 22)
+  Fill(b, "BACKGROUND", 0.16, 0.16, 0.18, 1)
+  Border(b, 0.4, 0.4, 0.45, 1)
+  local hl = b:CreateTexture(nil, "HIGHLIGHT")
+  hl:SetAllPoints()
+  hl:SetColorTexture(1, 1, 1, 0.08)
+  b.label = Text(b, "GameFontHighlightSmall", justify)
+  b.label:SetPoint("LEFT", b, "LEFT", 8, 0)
+  b.label:SetPoint("RIGHT", b, "RIGHT", -8, 0)
+  b.label:SetText(label or "")
+  return b
 end
 
 -- Verteilt die fünf Spaltentexte auf die verfügbare Breite
@@ -171,16 +195,8 @@ local function MakeCheck(parent, label, key, x)
 end
 
 local function BuildFilter(parent)
-  filterButton = CreateFrame("Button", nil, parent)
-  filterButton:SetSize(180, 22)
+  filterButton = FlatButton(parent, 180)
   filterButton:SetPoint("TOPLEFT", parent, "TOPLEFT", 12, -34)
-  Fill(filterButton, "BACKGROUND", 0.16, 0.16, 0.18, 1)
-  Border(filterButton, 0.4, 0.4, 0.45, 1)
-  local hl = filterButton:CreateTexture(nil, "HIGHLIGHT")
-  hl:SetAllPoints()
-  hl:SetColorTexture(1, 1, 1, 0.08)
-  filterButton.label = Text(filterButton, "GameFontHighlightSmall")
-  filterButton.label:SetPoint("LEFT", filterButton, "LEFT", 8, 0)
   filterButton.label:SetPoint("RIGHT", filterButton, "RIGHT", -20, 0)
   local arrow = filterButton:CreateTexture(nil, "ARTWORK")
   arrow:SetSize(12, 12)
@@ -283,33 +299,66 @@ local function Build()
   title:SetText("Händlerprofit")
   local subtitle = Text(titleBar, "GameFontDisableSmall")
   subtitle:SetPoint("LEFT", title, "RIGHT", 8, 0)
-  subtitle:SetText("herstellen und beim Händler verkaufen")
+  subtitle:SetText("Gewinn mit festen Händlerpreisen")
   local close = CreateFrame("Button", nil, window, "UIPanelCloseButton")
   close:SetPoint("TOPRIGHT", window, "TOPRIGHT", 2, 2)
   close:SetScript("OnClick", function() window:Hide() end)
 
+  -- Reiter
+  for i, label in ipairs(TABS) do
+    local b = FlatButton(window, 150, label, "CENTER")
+    b:SetPoint("TOPLEFT", window, "TOPLEFT", 12 + (i - 1) * 154, -31)
+    b:SetScript("OnClick", function() ns.SelectTab(i) end)
+    tabs[i] = b
+  end
+
+  -- Inhalt des Reiters »Herstellen«; die beiden anderen baut Preisanker
+  craft = CreateFrame("Frame", nil, window)
+  craft:SetPoint("TOPLEFT", window, "TOPLEFT", 0, -26)
+  craft:SetPoint("BOTTOMRIGHT", window, "BOTTOMRIGHT", 0, 0)
+  anker.FensterBauen(window)
+
   -- Filterzeile
-  BuildFilter(window)
-  checks[1] = MakeCheck(window, "Nur gelernte", "onlyKnown", 204)
-  checks[2] = MakeCheck(window, "Zwischenprodukte selbst herstellen", "craftIntermediates", 312)
-  checks[3] = MakeCheck(window, "Chat-Meldung", "announce", 540)
+  BuildFilter(craft)
+  checks[1] = MakeCheck(craft, "Nur gelernte", "onlyKnown", 204)
+  checks[2] = MakeCheck(craft, "Zwischenprodukte selbst herstellen", "craftIntermediates", 312)
+  checks[3] = MakeCheck(craft, "Chat-Meldung", "announce", 540)
 
   -- Zusammenfassung
-  local summary = CreateFrame("Frame", nil, window)
-  summary:SetPoint("TOPLEFT", window, "TOPLEFT", 12, -64)
-  summary:SetPoint("TOPRIGHT", window, "TOPRIGHT", -12, -64)
+  local summary = CreateFrame("Frame", nil, craft)
+  summary:SetPoint("TOPLEFT", craft, "TOPLEFT", 12, -64)
+  summary:SetPoint("TOPRIGHT", craft, "TOPRIGHT", -12, -64)
   summary:SetHeight(26)
   Fill(summary, "BACKGROUND", 1, 1, 1, 0.04)
+  -- Rechts: Preisquelle umschalten, daneben (nur beim eigenen Scan) der Scan-Knopf
+  sourceButton = FlatButton(summary, 132, "", "CENTER")
+  sourceButton:SetPoint("RIGHT", summary, "RIGHT", -2, 0)
+  sourceButton:SetScript("OnClick", function()
+    ns.db.priceSource = ns.PriceSource() == "scan" and "auctionator" or "scan"
+    ns.Refresh()
+  end)
+  sourceButton:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_TOP")
+    GameTooltip:SetText("Woher die Auktionspreise kommen")
+    GameTooltip:AddLine("Auctionator: Preise aus dessen Scans.", 1, 1, 1, true)
+    GameTooltip:AddLine("Eigener Scan: »Scannen« liest das offene Auktionshaus (etwa eine halbe Minute).", 1, 1, 1, true)
+    GameTooltip:AddLine("Klick wechselt die Quelle.", 0.6, 0.6, 0.6, true)
+    GameTooltip:Show()
+  end)
+  sourceButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  scanButton = FlatButton(summary, 66, "Scannen", "CENTER")
+  scanButton:SetPoint("RIGHT", sourceButton, "LEFT", -4, 0)
+  scanButton:SetScript("OnClick", function() anker.ScanStarten() end)
+  scanText = Text(summary, "GameFontHighlightSmall", "RIGHT")
   summaryText = Text(summary, "GameFontHighlight")
   summaryText:SetPoint("LEFT", summary, "LEFT", 8, 0)
-  scanText = Text(summary, "GameFontHighlightSmall", "RIGHT")
-  scanText:SetPoint("RIGHT", summary, "RIGHT", -8, 0)
+  summaryText:SetPoint("RIGHT", scanText, "LEFT", -8, 0)
 
   -- Spaltenköpfe
-  header = CreateFrame("Frame", nil, window)
+  header = CreateFrame("Frame", nil, craft)
   header:SetHeight(20)
-  header:SetPoint("TOPLEFT", window, "TOPLEFT", 12, -96)
-  header:SetPoint("TOPRIGHT", window, "TOPRIGHT", -24, -96)
+  header:SetPoint("TOPLEFT", craft, "TOPLEFT", 12, -96)
+  header:SetPoint("TOPRIGHT", craft, "TOPRIGHT", -24, -96)
   local h = Columns(header, "GameFontNormalSmall", MIN_WIDTH - 36)
   header.text = h
   h.name:SetText("Gegenstand")
@@ -317,26 +366,26 @@ local function Build()
   h.cost:SetText("Material")
   h.sell:SetText("Händler zahlt")
   h.profit:SetText("Gewinn")
-  local rule = window:CreateTexture(nil, "ARTWORK")
+  local rule = craft:CreateTexture(nil, "ARTWORK")
   rule:SetColorTexture(0.35, 0.30, 0.15, 1)
   rule:SetHeight(1)
-  rule:SetPoint("TOPLEFT", window, "TOPLEFT", 12, -117)
-  rule:SetPoint("TOPRIGHT", window, "TOPRIGHT", -12, -117)
+  rule:SetPoint("TOPLEFT", craft, "TOPLEFT", 12, -117)
+  rule:SetPoint("TOPRIGHT", craft, "TOPRIGHT", -12, -117)
 
   -- Liste
-  scroll = CreateFrame("ScrollFrame", nil, window)
-  scroll:SetPoint("TOPLEFT", window, "TOPLEFT", 12, -120)
-  scroll:SetPoint("BOTTOMRIGHT", window, "BOTTOMRIGHT", -24, 34)
+  scroll = CreateFrame("ScrollFrame", nil, craft)
+  scroll:SetPoint("TOPLEFT", craft, "TOPLEFT", 12, -120)
+  scroll:SetPoint("BOTTOMRIGHT", craft, "BOTTOMRIGHT", -24, 34)
   content = CreateFrame("Frame", nil, scroll)
   content:SetSize(MIN_WIDTH - 36, ROW_HEIGHT)
   scroll:SetScrollChild(content)
 
   -- Schmaler Rollbalken
-  slider = CreateFrame("Slider", nil, window)
+  slider = CreateFrame("Slider", nil, craft)
   slider:SetOrientation("VERTICAL")
   slider:SetWidth(8)
-  slider:SetPoint("TOPRIGHT", window, "TOPRIGHT", -10, -120)
-  slider:SetPoint("BOTTOMRIGHT", window, "BOTTOMRIGHT", -10, 34)
+  slider:SetPoint("TOPRIGHT", craft, "TOPRIGHT", -10, -120)
+  slider:SetPoint("BOTTOMRIGHT", craft, "BOTTOMRIGHT", -10, 34)
   Fill(slider, "BACKGROUND", 1, 1, 1, 0.05)
   local thumb = slider:CreateTexture(nil, "ARTWORK")
   thumb:SetColorTexture(0.6, 0.5, 0.2, 0.9)
@@ -367,28 +416,44 @@ local function Build()
     Relayout()
   end)
 
-  emptyText = Text(window, "GameFontDisable", "CENTER")
-  emptyText:SetPoint("TOPLEFT", window, "TOPLEFT", 60, -190)
-  emptyText:SetPoint("TOPRIGHT", window, "TOPRIGHT", -60, -190)
+  emptyText = Text(craft, "GameFontDisable", "CENTER")
+  emptyText:SetPoint("TOPLEFT", craft, "TOPLEFT", 60, -190)
+  emptyText:SetPoint("TOPRIGHT", craft, "TOPRIGHT", -60, -190)
   if emptyText.SetWordWrap then emptyText:SetWordWrap(true) end
 
   -- Fußzeile
-  statusText = Text(window, "GameFontDisableSmall")
-  statusText:SetPoint("BOTTOMLEFT", window, "BOTTOMLEFT", 14, 11)
-  statusText:SetPoint("BOTTOMRIGHT", window, "BOTTOMRIGHT", -26, 11)
+  statusText = Text(craft, "GameFontDisableSmall")
+  statusText:SetPoint("BOTTOMLEFT", craft, "BOTTOMLEFT", 14, 11)
+  statusText:SetPoint("BOTTOMRIGHT", craft, "BOTTOMRIGHT", -26, 11)
 
-  window:SetScript("OnShow", function() ns.Refresh() end)
+  -- Scan-Knopf und Scan-Anzeige folgen dem Auktionshaus, auch ohne neue Preise
+  local wait = 0
+  craft:SetScript("OnUpdate", function(_, elapsed)
+    wait = wait + (elapsed or 0)
+    if wait >= 0.3 then
+      wait = 0
+      UpdateScanControls()
+    end
+  end)
+
+  window:SetScript("OnShow", function() ns.SelectTab(tab) end)
   window:SetScript("OnHide", function() filterMenu:Hide() end)
   window:Hide()
 end
 
 function ns.IsShown()
-  return window and window:IsShown()
+  return window and window:IsShown() or false
 end
 
 local function ScanStatus()
+  local own = ns.PriceSource() == "scan"
+  if own and anker.scan then
+    return ("|cffffd100Scan läuft: %d Gegenstände|r"):format(anker.zahl.zeilen)
+  end
   local last = ns.LastScanTime()
-  if not last then return "|cffff9933Noch kein AH-Scan gefunden|r" end
+  if not last then
+    return own and "|cffff9933Noch kein eigener Scan|r" or "|cffff9933Noch kein AH-Scan gefunden|r"
+  end
   local minutes = math.floor((time() - last) / 60)
   local ago
   if minutes < 1 then
@@ -403,8 +468,21 @@ local function ScanStatus()
   return (minutes < 120 and "|cff33ff33" or "|cffff9933") .. "AH-Scan vor " .. ago .. "|r"
 end
 
+-- Preisquelle, Scan-Knopf und Scan-Anzeige in der Zusammenfassung
+function UpdateScanControls()
+  local own = ns.PriceSource() == "scan"
+  sourceButton.label:SetText("Preise: " .. (own and "eigener Scan" or "Auctionator"))
+  scanButton:SetShown(own)
+  local ready = own and anker.ahOffen and not anker.scan and not anker.kauf
+  scanButton:SetEnabled(ready and true or false)
+  if ready then scanButton.label:SetTextColor(1, 1, 1) else scanButton.label:SetTextColor(0.5, 0.5, 0.5) end
+  scanText:ClearAllPoints()
+  scanText:SetPoint("RIGHT", own and scanButton or sourceButton, "LEFT", -8, 0)
+  scanText:SetText(ScanStatus())
+end
+
 function ns.Refresh()
-  if not window or not window:IsShown() then return end
+  if not window or not window:IsShown() or tab ~= 1 then return end
   for _, cb in ipairs(checks) do cb:SetChecked(ns.db[cb.key]) end
   local skill = ns.db.skillFilter
   filterButton.label:SetText("Beruf: " .. (skill and ns.PROFESSIONS[skill] or "Alle"))
@@ -438,12 +516,16 @@ function ns.Refresh()
   content:SetHeight(math.max(shown, 1) * ROW_HEIGHT)
   Relayout()
 
-  scanText:SetText(ScanStatus())
+  UpdateScanControls()
 
   local empty, footer = "", ""
-  if not ns.AuctionatorAPI() then
+  local own = ns.PriceSource() == "scan"
+  if not own and not ns.AuctionatorAPI() then
     summaryText:SetText("|cffff5555Auctionator ist nicht geladen|r")
-    empty = "Ohne Auctionator gibt es keine Preise."
+    empty = "Ohne Auctionator gibt es dort keine Preise.\nStelle oben rechts auf »eigener Scan« um."
+  elseif own and not ns.LastScanTime() and #list == 0 then
+    summaryText:SetText("Noch keine Preise")
+    empty = "Öffne das Auktionshaus und drücke oben rechts »Scannen«."
   elseif stats.considered == 0 then
     summaryText:SetText("Keine Rezepte erkannt")
     if skill and ns.db.onlyKnown then
@@ -468,7 +550,36 @@ function ns.Refresh()
   statusText:SetText(footer)
 end
 
-function ns.Toggle()
+-- Wählt den Reiter: 1 Herstellen, 2 Unter Händlerpreis, 3 Händlerware
+function ns.SelectTab(i)
+  tab = i
+  if not window then return end
+  for n, b in ipairs(tabs) do
+    if n == i then b.label:SetTextColor(GOLD[1], GOLD[2], GOLD[3]) else b.label:SetTextColor(0.8, 0.8, 0.8) end
+  end
+  craft:SetShown(i == 1)
+  anker.BlattZeigen(i > 1 and i - 1 or nil)
+  if i == 1 then ns.Refresh() else filterMenu:Hide() end
+end
+
+-- Öffnet das Fenster, auf Wunsch gleich mit einem bestimmten Reiter
+function ns.Open(i)
   if not window then Build() end
-  if window:IsShown() then window:Hide() else window:Show() end
+  tab = i or tab
+  if window:IsShown() then ns.SelectTab(tab) else window:Show() end
+end
+
+function ns.Close()
+  if window then window:Hide() end
+end
+
+-- Setzt das Fenster rechts neben einen anderen Rahmen (das Auktionshaus)
+function ns.Dock(frame)
+  if not window then return end
+  window:ClearAllPoints()
+  window:SetPoint("TOPLEFT", frame, "TOPRIGHT", 6, 0)
+end
+
+function ns.Toggle()
+  if ns.IsShown() then ns.Close() else ns.Open() end
 end

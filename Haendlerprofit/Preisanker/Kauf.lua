@@ -3,7 +3,9 @@
 --   Handelsware:  Klick → Preisangebot vom Server → zweiter Klick bestätigt (oder automatisch,
 --                 wenn »/pa auto« an ist und das Angebot den erwarteten Gewinn hält).
 
-local ADDON, ns = ...
+local ADDON, hp = ...
+hp.anker = hp.anker or {}
+local ns = hp.anker -- eigener Namensraum im Addon Händlerprofit
 local AH = C_AuctionHouse
 
 local FEHLER = {

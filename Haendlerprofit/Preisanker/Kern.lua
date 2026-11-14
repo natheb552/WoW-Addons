@@ -6,7 +6,9 @@
 --   2. Liegt der Auktionspreis ÜBER dem Preis, zu dem ein Händler die Ware verkauft,
 --      lohnt Einkaufen beim Händler und Einstellen im Auktionshaus.
 
-local ADDON, ns = ...
+local ADDON, hp = ...
+hp.anker = hp.anker or {}
+local ns = hp.anker -- eigener Namensraum im Addon Händlerprofit
 
 ns.GEBUEHR = 0.05 -- Anteil, den das Auktionshaus vom Verkaufspreis behält
 
