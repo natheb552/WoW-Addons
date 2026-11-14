@@ -7,15 +7,17 @@ Einbau
 
 Fenster:  /hp   mit drei Reitern
 
+Preisquelle (oben rechts in jedem Reiter, gilt für alle drei)
+  Preise: Auctionator    Preise aus den Scans von Auctionator. Für die Preisanker-Listen
+                         im Auktionshaus "Auswerten" drücken, nachdem Auctionator gescannt hat.
+  Preise: eigener Scan   Auktionshaus öffnen, "Scannen" drücken (etwa eine halbe Minute).
+
 Herstellen
   Rezepte, deren Ergebnis der Händler teurer abnimmt, als die Materialien kosten.
-  Oben rechts wählst du, woher die Auktionspreise kommen:
-    Preise: Auctionator    Preise aus den Scans von Auctionator.
-    Preise: eigener Scan   Auktionshaus öffnen, "Scannen" drücken (etwa eine halbe Minute).
   Händlerpreise für Material kommen aus Auctionator und von den Händlern, die du besucht hast.
 
 Unter Händlerpreis (Preisanker)
-  1. Auktionshaus öffnen, "Scannen" drücken.
+  1. Auktionshaus öffnen, "Scannen" oder "Auswerten" drücken.
   2. "Kaufen" drücken (Handelsware: danach "Bestätigen"). Ein Klick kauft ein Stück
      oder eine Handelsware-Menge.
   3. Einkäufe aus dem Briefkasten holen, zu einem Händler gehen,

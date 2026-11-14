@@ -182,9 +182,14 @@ local function Drossel(kauf)
   end)
 end
 
+-- Nach einer Suche über alle Ausführungen (SendSellSearchQuery) zählt nur die Gegenstandsnummer.
+local alleAusfuehrungen = {}
 local function MarktZeile(key)
   for _, z in ipairs(S.markt) do
-    if z.key.itemID == key.itemID and z.key.itemSuffix == (key.itemSuffix or 0) then return z end
+    if z.key.itemID == key.itemID
+        and (alleAusfuehrungen[key.itemID] or z.key.itemSuffix == (key.itemSuffix or 0)) then
+      return z
+    end
   end
 end
 
@@ -256,6 +261,20 @@ function C_AuctionHouse.SendSearchQuery(key, sorts, getrennt)
       S.Ereignis("ITEM_SEARCH_RESULTS_UPDATED", key)
     end
   end)
+end
+function C_AuctionHouse.SendSellSearchQuery(key, sorts, getrennt)
+  alleAusfuehrungen[key.itemID] = true
+  S.verkaufsSuchen = (S.verkaufsSuchen or 0) + 1
+  C_AuctionHouse.SendSearchQuery(key, sorts, getrennt)
+end
+function C_AuctionHouse.MakeItemKey(itemID)
+  return { itemID = itemID, itemLevel = 0, itemSuffix = 0, battlePetSpeciesID = 0 }
+end
+function C_AuctionHouse.GetItemCommodityStatus(itemID)
+  for _, z in ipairs(S.markt) do
+    if z.key.itemID == itemID then return z.ware and 2 or 1 end
+  end
+  return 0
 end
 local function Stufen(itemID)
   local z = MarktZeile({ itemID = itemID })

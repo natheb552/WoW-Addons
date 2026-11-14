@@ -353,5 +353,53 @@ SlashCmdList.PREISANKER("min 2s")
 gleich(HaendlerprofitDB.anker.opt.minGewinn, 200, "Einstellung gespeichert")
 S.Warten(1)
 
+---------------------------------------------------------------- Preisanker mit Auctionator-Preisen
+
+for _, z in ipairs(S.markt) do
+  if z.key.itemID == 100 then z.stufen = { { preis = 10, menge = 100 } } end
+  if z.key.itemID == 200 then z.lose = { { auctionID = 21, preis = 300, link = S.Link(200, "Banditenhandschuhe des Affen") } } end
+end
+local tag = math.floor((time() - 1577833200) / 86400)
+local function Eintrag(preis, menge, alter)
+  local t = tostring(tag - (alter or 0))
+  return { m = preis, h = { [t] = preis }, l = {}, a = { [t] = menge } }
+end
+Auctionator = {
+  API = { v1 = {} },
+  SavedState = { TimeOfLastBrowseScan = time() },
+  Database = { db = {
+    version = 2,
+    ["100"] = Eintrag(10, 100),      -- Leder unter dem Händlerpreis 50
+    ["200"] = Eintrag(300, 1),       -- Handschuhe: Einzelstück, nur die Gegenstandsnummer bekannt
+    ["g:200:10"] = Eintrag(300, 1),  -- derselbe Gegenstand je Stufe: wird übergangen
+    ["101"] = Eintrag(30, 100),      -- teurer als beim Händler
+    ["300"] = Eintrag(200, 40),      -- Händlerware
+    ["103"] = Eintrag(1, 500, 5),    -- fünf Tage alt: nicht aus dem letzten Scan
+  } },
+}
+HaendlerprofitDB.priceSource = "auctionator"
+ns.db.preise[100] = 777
+ns.ScanStarten()
+gleich(ns.scan and ns.scan.phase, "preise", "Auctionator: kein Lesen des Auktionshauses nötig")
+S.Warten(20)
+gleich(ns.scan, nil, "Auctionator: Auswertung beendet")
+gleich(ns.letzterScan.zeilen, 4, "Auctionator: nur aktuelle Preise mit Gegenstandsnummer")
+gleich(geschaeft(103), nil, "Auctionator: alter Preis bleibt weg")
+gleich(ns.db.preise[100], 777, "Auctionator: Preise des eigenen Scans bleiben unberührt")
+leder, handschuhe = geschaeft(100), geschaeft(200)
+gleich(leder.status, "bereit", "Auctionator: Leder bereit")
+gleich(leder.gewinn, 4000, "Auctionator: Leder Gewinn nach Prüfung im Auktionshaus")
+gleich(handschuhe.status, "bereit", "Auctionator: Handschuhe über die Suche aller Ausführungen gefunden")
+gleich(handschuhe.gewinn, 900, "Auctionator: Handschuhe Gewinn")
+gleich((S.verkaufsSuchen or 0) >= 1, true, "Auctionator: Einzelstück über alle Ausführungen gesucht")
+gleich(ns.haendlerware[1] and ns.haendlerware[1].itemID, 300, "Auctionator: Händlerware erkannt")
+ns.Kaufen(handschuhe)
+S.Warten(0.6)
+gleich(S.gebote[#S.gebote].auctionID, 21, "Auctionator: Handschuhe gekauft")
+Auctionator.Database = nil
+ns.ScanStarten()
+gleich(gesagt("Auctionator ist nicht geladen"), true, "ohne Auctionator-Daten: Hinweis statt Auswertung")
+Auctionator, HaendlerprofitDB.priceSource = nil, nil
+
 echo(("%d Prüfungen, %d Fehler"):format(geprueft, fehler))
 os.exit(fehler == 0 and 0 or 1)

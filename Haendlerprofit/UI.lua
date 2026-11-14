@@ -13,9 +13,7 @@ local GOLD = { 1, 0.82, 0 }
 
 local TABS = { "Herstellen", "Unter Händlerpreis", "Händlerware" }
 
-local window, craft, content, scroll, slider, header, emptyText, summaryText, scanText, statusText
-local sourceButton, scanButton
-local UpdateScanControls -- weiter unten
+local window, craft, content, scroll, slider, header, emptyText, summaryText, statusText, controls
 local rows, checks, tabs = {}, {}, {}
 local tab = 1
 local filterButton, filterMenu, filterEntries = nil, nil, {}
@@ -66,6 +64,96 @@ local function FlatButton(parent, width, label, justify)
   b.label:SetText(label or "")
   return b
 end
+
+local function SetButtonEnabled(b, on)
+  b:SetEnabled(on and true or false)
+  if on then b.label:SetTextColor(1, 1, 1) else b.label:SetTextColor(0.5, 0.5, 0.5) end
+end
+
+-- Kästchen mit Beschriftung; onClick bekommt true oder false
+local function Check(parent, label, x, onClick)
+  local cb = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
+  cb:SetSize(22, 22)
+  cb:SetPoint("TOPLEFT", parent, "TOPLEFT", x, -34)
+  local text = Text(cb, "GameFontHighlightSmall")
+  text:SetPoint("LEFT", cb, "RIGHT", 1, 0)
+  text:SetText(label)
+  cb:SetScript("OnClick", function(self) onClick(self:GetChecked() and true or false) end)
+  return cb
+end
+
+-- Stand der gewählten Preisquelle als kurzer farbiger Text
+local function ScanStatus()
+  local own = ns.PriceSource() == "scan"
+  if anker.scan then
+    if anker.scan.phase == "liste" then
+      return ("|cffffd100Scan läuft: %d Gegenstände|r"):format(anker.zahl.zeilen)
+    end
+    return "|cffffd100Lade Händlerpreise|r"
+  end
+  local last = ns.LastScanTime()
+  if not last then
+    return own and "|cffff9933Noch kein eigener Scan|r" or "|cffff9933Noch kein AH-Scan gefunden|r"
+  end
+  local minutes = math.floor((time() - last) / 60)
+  local ago
+  if minutes < 1 then
+    return "|cff33ff33AH-Scan gerade eben|r"
+  elseif minutes < 60 then
+    ago = minutes .. " Min."
+  elseif minutes < 2880 then
+    ago = math.floor(minutes / 60) .. " Std."
+  else
+    ago = math.floor(minutes / 1440) .. " Tagen"
+  end
+  return (minutes < 120 and "|cff33ff33" or "|cffff9933") .. "AH-Scan vor " .. ago .. "|r"
+end
+
+-- Rechts in der Zusammenfassung, in allen Reitern gleich: Scan-Anzeige, Scan-Knopf, Preisquelle.
+-- always = true zeigt den Knopf auch bei Auctionator-Preisen; dort wertet er dessen Scan aus.
+local function SourceControls(summary, always)
+  local c = {}
+  c.source = FlatButton(summary, 132, "", "CENTER")
+  c.source:SetPoint("RIGHT", summary, "RIGHT", -2, 0)
+  c.source:SetScript("OnClick", function()
+    ns.db.priceSource = ns.PriceSource() == "scan" and "auctionator" or "scan"
+    ns.Refresh()
+    anker.Neu()
+  end)
+  c.source:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_TOP")
+    GameTooltip:SetText("Woher die Auktionspreise kommen")
+    GameTooltip:AddLine("Auctionator: Preise aus dessen Scans.", 1, 1, 1, true)
+    GameTooltip:AddLine("Eigener Scan: »Scannen« liest das offene Auktionshaus (etwa eine halbe Minute).", 1, 1, 1, true)
+    GameTooltip:AddLine("Gilt für alle drei Reiter. Klick wechselt die Quelle.", 0.6, 0.6, 0.6, true)
+    GameTooltip:Show()
+  end)
+  c.source:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  c.scan = FlatButton(summary, 74, "", "CENTER")
+  c.scan:SetPoint("RIGHT", c.source, "LEFT", -4, 0)
+  c.scan:SetScript("OnClick", function() anker.ScanStarten() end)
+  c.text = Text(summary, "GameFontHighlightSmall", "RIGHT")
+
+  function c.Update()
+    local own = ns.PriceSource() == "scan"
+    local shown = own or always
+    c.source.label:SetText("Preise: " .. (own and "eigener Scan" or "Auctionator"))
+    c.scan:SetShown(shown)
+    c.scan.label:SetText(own and "Scannen" or "Auswerten")
+    SetButtonEnabled(c.scan, anker.ahOffen and not anker.scan and not anker.kauf)
+    c.text:ClearAllPoints()
+    c.text:SetPoint("RIGHT", shown and c.scan or c.source, "LEFT", -8, 0)
+    c.text:SetText(ScanStatus())
+  end
+  return c
+end
+
+-- Bausteine für die Preisanker-Reiter, damit alle Reiter gleich aussehen
+ns.ui = {
+  Fill = Fill, Border = Border, Text = Text, FlatButton = FlatButton, Check = Check,
+  SetButtonEnabled = SetButtonEnabled, SourceControls = SourceControls,
+  GOLD = GOLD, ROW_HEIGHT = ROW_HEIGHT,
+}
 
 -- Verteilt die fünf Spaltentexte auf die verfügbare Breite
 local function LayoutColumns(t, parent, width)
@@ -180,14 +268,8 @@ end
 -- ---------------------------------------------------------------- Bedienelemente
 
 local function MakeCheck(parent, label, key, x)
-  local cb = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
-  cb:SetSize(22, 22)
-  cb:SetPoint("TOPLEFT", parent, "TOPLEFT", x, -34)
-  local text = Text(cb, "GameFontHighlightSmall")
-  text:SetPoint("LEFT", cb, "RIGHT", 1, 0)
-  text:SetText(label)
-  cb:SetScript("OnClick", function(self)
-    ns.db[key] = self:GetChecked() and true or false
+  local cb = Check(parent, label, x, function(on)
+    ns.db[key] = on
     ns.Refresh()
   end)
   cb.key = key
@@ -330,29 +412,10 @@ local function Build()
   summary:SetPoint("TOPRIGHT", craft, "TOPRIGHT", -12, -64)
   summary:SetHeight(26)
   Fill(summary, "BACKGROUND", 1, 1, 1, 0.04)
-  -- Rechts: Preisquelle umschalten, daneben (nur beim eigenen Scan) der Scan-Knopf
-  sourceButton = FlatButton(summary, 132, "", "CENTER")
-  sourceButton:SetPoint("RIGHT", summary, "RIGHT", -2, 0)
-  sourceButton:SetScript("OnClick", function()
-    ns.db.priceSource = ns.PriceSource() == "scan" and "auctionator" or "scan"
-    ns.Refresh()
-  end)
-  sourceButton:SetScript("OnEnter", function(self)
-    GameTooltip:SetOwner(self, "ANCHOR_TOP")
-    GameTooltip:SetText("Woher die Auktionspreise kommen")
-    GameTooltip:AddLine("Auctionator: Preise aus dessen Scans.", 1, 1, 1, true)
-    GameTooltip:AddLine("Eigener Scan: »Scannen« liest das offene Auktionshaus (etwa eine halbe Minute).", 1, 1, 1, true)
-    GameTooltip:AddLine("Klick wechselt die Quelle.", 0.6, 0.6, 0.6, true)
-    GameTooltip:Show()
-  end)
-  sourceButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
-  scanButton = FlatButton(summary, 66, "Scannen", "CENTER")
-  scanButton:SetPoint("RIGHT", sourceButton, "LEFT", -4, 0)
-  scanButton:SetScript("OnClick", function() anker.ScanStarten() end)
-  scanText = Text(summary, "GameFontHighlightSmall", "RIGHT")
+  controls = SourceControls(summary, false)
   summaryText = Text(summary, "GameFontHighlight")
   summaryText:SetPoint("LEFT", summary, "LEFT", 8, 0)
-  summaryText:SetPoint("RIGHT", scanText, "LEFT", -8, 0)
+  summaryText:SetPoint("RIGHT", controls.text, "LEFT", -8, 0)
 
   -- Spaltenköpfe
   header = CreateFrame("Frame", nil, craft)
@@ -432,7 +495,7 @@ local function Build()
     wait = wait + (elapsed or 0)
     if wait >= 0.3 then
       wait = 0
-      UpdateScanControls()
+      controls.Update()
     end
   end)
 
@@ -443,42 +506,6 @@ end
 
 function ns.IsShown()
   return window and window:IsShown() or false
-end
-
-local function ScanStatus()
-  local own = ns.PriceSource() == "scan"
-  if own and anker.scan then
-    return ("|cffffd100Scan läuft: %d Gegenstände|r"):format(anker.zahl.zeilen)
-  end
-  local last = ns.LastScanTime()
-  if not last then
-    return own and "|cffff9933Noch kein eigener Scan|r" or "|cffff9933Noch kein AH-Scan gefunden|r"
-  end
-  local minutes = math.floor((time() - last) / 60)
-  local ago
-  if minutes < 1 then
-    return "|cff33ff33AH-Scan gerade eben|r"
-  elseif minutes < 60 then
-    ago = minutes .. " Min."
-  elseif minutes < 2880 then
-    ago = math.floor(minutes / 60) .. " Std."
-  else
-    ago = math.floor(minutes / 1440) .. " Tagen"
-  end
-  return (minutes < 120 and "|cff33ff33" or "|cffff9933") .. "AH-Scan vor " .. ago .. "|r"
-end
-
--- Preisquelle, Scan-Knopf und Scan-Anzeige in der Zusammenfassung
-function UpdateScanControls()
-  local own = ns.PriceSource() == "scan"
-  sourceButton.label:SetText("Preise: " .. (own and "eigener Scan" or "Auctionator"))
-  scanButton:SetShown(own)
-  local ready = own and anker.ahOffen and not anker.scan and not anker.kauf
-  scanButton:SetEnabled(ready and true or false)
-  if ready then scanButton.label:SetTextColor(1, 1, 1) else scanButton.label:SetTextColor(0.5, 0.5, 0.5) end
-  scanText:ClearAllPoints()
-  scanText:SetPoint("RIGHT", own and scanButton or sourceButton, "LEFT", -8, 0)
-  scanText:SetText(ScanStatus())
 end
 
 function ns.Refresh()
@@ -516,7 +543,7 @@ function ns.Refresh()
   content:SetHeight(math.max(shown, 1) * ROW_HEIGHT)
   Relayout()
 
-  UpdateScanControls()
+  controls.Update()
 
   local empty, footer = "", ""
   local own = ns.PriceSource() == "scan"

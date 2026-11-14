@@ -1,5 +1,6 @@
 -- Preisanker: Auktionshaus lesen.
 --   1. Überblick: eine leere Suche liefert je Gegenstand den billigsten Preis (ca. 20 s).
+--      Bei Preisquelle Auctionator kommt der Überblick stattdessen aus dessen Preisdatenbank.
 --   2. Händlerpreise der gefundenen Gegenstände laden (einmalig, danach gemerkt).
 --   3. Jeden Kandidaten einzeln nachschlagen, um die echten Lose und Mengen zu sehen.
 
@@ -138,6 +139,11 @@ end
 -- Einzelstücke: Antwort ist eine Liste von Losen, jedes mit eigenem Link.
 local function ErgebnisLose(itemKey)
   local g = itemKey and ns.nachId[ns.Schluessel(itemKey)]
+  -- Zeilen aus Auctionator kennen nur die Gegenstandsnummer; das Spiel kann die Antwort
+  -- unter einem genaueren Schlüssel melden. Dann zählt die gerade laufende Suche.
+  if not g and itemKey and aktuell and aktuell.g.ohneStufe and aktuell.g.itemID == itemKey.itemID then
+    g = aktuell.g
+  end
   if not g or (ns.kauf and ns.kauf.g == g) then return end
   local lose = {}
   for i = 1, AH.GetNumItemSearchResults(itemKey) do
@@ -168,6 +174,18 @@ end
 ns.Bei("COMMODITY_SEARCH_RESULTS_UPDATED", ErgebnisWare)
 ns.Bei("ITEM_SEARCH_RESULTS_UPDATED", ErgebnisLose)
 
+-- Schlägt ein Geschäft im Auktionshaus nach. Zeilen aus Auctionator haben keinen genauen
+-- Schlüssel (Stufe, Zufallsverzauberung): Einzelstücke brauchen dann die Suche über alle Ausführungen.
+local function Suchen(g)
+  local ware = Enum.ItemCommodityStatus and Enum.ItemCommodityStatus.Commodity or 2
+  if g.ohneStufe and AH.SendSellSearchQuery
+      and (AH.GetItemCommodityStatus and AH.GetItemCommodityStatus(g.itemID)) ~= ware then
+    AH.SendSellSearchQuery(g.key, SORT_KAUF, false)
+  else
+    AH.SendSearchQuery(g.key, SORT_KAUF, false)
+  end
+end
+
 local function Pruefen()
   if ns.scan or ns.kauf then return end
   local jetzt = GetTime()
@@ -191,7 +209,7 @@ local function Pruefen()
       end
       g.status = "laeuft"
       aktuell, letzteSuche = { g = g, gesendet = jetzt }, jetzt
-      AH.SendSearchQuery(g.key, SORT_KAUF, false)
+      Suchen(g)
       ns.Neu()
       return
     end
@@ -215,6 +233,7 @@ local function Auswerten()
       local name, link, bild = NameLinkBild(z.itemID)
       local g = {
         id = id, key = z.key, itemID = z.itemID, name = name, link = link, bild = bild,
+        ohneStufe = z.ohneStufe,
         wert = wert, ahPreis = z.preis, ahMenge = z.menge,
         geprueft = false, gewinn = wert - z.preis,
         hoechstens = (wert - z.preis) * z.menge, -- mehr Gewinn kann die Zeile nicht bringen
@@ -231,10 +250,13 @@ local function Auswerten()
     end
   end
 
-  -- Die Preise bleiben gespeichert: der Reiter »Herstellen« rechnet damit Materialkosten.
-  local preise = {}
-  for itemID, b in pairs(billigst) do preise[itemID] = b.preis end
-  ns.db.preise, ns.db.preisZeit = preise, time()
+  -- Die Preise des eigenen Scans bleiben gespeichert: der Reiter »Herstellen« rechnet
+  -- damit Materialkosten.
+  if scan.quelle ~= "auctionator" then
+    local preise = {}
+    for itemID, b in pairs(billigst) do preise[itemID] = b.preis end
+    ns.db.preise, ns.db.preisZeit = preise, time()
+  end
 
   local ware = {}
   for itemID, h in pairs(ns.db.haendler) do
@@ -381,14 +403,61 @@ ns.Bei("AUCTION_HOUSE_BROWSE_FAILURE", function()
   end
 end)
 
+-- Überblick aus der Preisdatenbank von Auctionator: je Gegenstand der zuletzt gesehene
+-- billigste Preis. Nur Preise aus dessen letztem Scan, sonst kämen längst verkaufte
+-- Auktionen in die Liste. Liefert nil, wenn Auctionator fehlt.
+local function AusAuctionator()
+  local daten = Auctionator and Auctionator.Database and Auctionator.Database.db
+  if type(daten) ~= "table" then return nil end
+  local tag0 = (Auctionator.Constants and Auctionator.Constants.SCAN_DAY_0) or 1577833200
+  local heute = math.floor((time() - tag0) / 86400)
+  local grenze = hp.FreshLimit()
+  local zeilen, zahl = {}, 0
+  for dbKey, e in pairs(daten) do
+    -- Schlüssel sind Gegenstandsnummern; "g:..." (Ausrüstung je Stufe) und "p:..." (Haustiere) bleiben weg.
+    local itemID = type(dbKey) == "string" and dbKey:match("^%d+$") and tonumber(dbKey)
+    if itemID and type(e) == "table" and type(e.h) == "table" and (e.m or 0) > 0 then
+      local letzter
+      for tag in pairs(e.h) do
+        tag = tonumber(tag)
+        if tag and (not letzter or tag > letzter) then letzter = tag end
+      end
+      if letzter and heute - letzter <= grenze then
+        local key = AH.MakeItemKey and AH.MakeItemKey(itemID)
+          or { itemID = itemID, itemLevel = 0, itemSuffix = 0, battlePetSpeciesID = 0 }
+        local menge = type(e.a) == "table" and e.a[tostring(letzter)] or 1
+        zeilen[ns.Schluessel(key)] = {
+          key = key, itemID = itemID, preis = e.m, menge = math.max(1, menge), ohneStufe = true,
+        }
+        zahl = zahl + 1
+      end
+    end
+  end
+  return zeilen, zahl
+end
+
 function ns.ScanStarten()
   if not ns.ahOffen then return ns.Sag("Erst das Auktionshaus öffnen.") end
   if ns.scan then return end
   if ns.kauf then return ns.Sag("Erst den laufenden Kauf abschließen.") end
   local F, S = Enum.AuctionHouseFilter, Enum.AuctionHouseSortOrder
+  local ausAuctionator = hp.PriceSource() == "auctionator"
+  local zeilen, zahl
+  if ausAuctionator then
+    zeilen, zahl = AusAuctionator()
+    if not zeilen then return ns.Sag("Auctionator ist nicht geladen. Stelle die Preise auf »eigener Scan« um.") end
+    if zahl == 0 then return ns.Sag("Auctionator hat keine aktuellen Preise. Erst dort scannen.") end
+  end
   wartend, aktuell = {}, nil
   ns.zeilen, ns.zahl.zeilen = {}, 0
   ns.geschaefte, ns.haendlerware, ns.nachId, ns.pruefFolge = {}, {}, {}, {}
+  if ausAuctionator then
+    -- Kein Lesen des Auktionshauses nötig: gleich weiter mit den Händlerpreisen.
+    ns.zeilen, ns.zahl.zeilen = zeilen, zahl
+    ns.scan = { start = GetTime(), quelle = "auctionator" }
+    PreiseLaden()
+    return ns.Neu()
+  end
   local scan = { phase = "liste", start = GetTime(), aktiv = GetTime() }
   ns.scan = scan
   ns.Senden(function()

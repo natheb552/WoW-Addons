@@ -1,19 +1,20 @@
 -- Preisanker: zwei Listen als Reiter im Händlerprofit-Fenster und die Befehle /preisanker und /pa.
+-- Aufbau und Aussehen folgen dem Reiter »Herstellen« (UI.lua); die Bausteine kommen aus hp.ui.
 
 local ADDON, hp = ...
 hp.anker = hp.anker or {}
 local ns = hp.anker -- eigener Namensraum im Addon Händlerprofit
 
-local ZEILENHOEHE = 22
-local BREITE = 660          -- Fensterbreite, für die die Spalten ausgelegt sind
-local OBEN, UNTEN = 84, 30  -- Platz über und unter den Zeilen
+local ZEILENHOEHE = 24
+local OBEN, UNTEN = 120, 34 -- Platz über und unter den Zeilen, wie im Reiter »Herstellen«
 
--- Spalten je Liste: Titel, Breite, Ausrichtung. Die letzte Spalte der ersten Liste ist der Knopf.
+-- Spalten je Liste: Titel, Breite, Ausrichtung. Die erste nimmt den Platz, der übrig bleibt.
+-- Die letzte Spalte der ersten Liste ist der Knopf.
 local SPALTEN = {
-  { { "Gegenstand", 250, "LEFT" }, { "Menge", 55, "RIGHT" }, { "Kosten", 95, "RIGHT" },
-    { "Gewinn", 95, "RIGHT" }, { "", 100, "CENTER" } },
-  { { "Gegenstand", 185, "LEFT" }, { "Händler", 80, "RIGHT" }, { "Auktion ab", 80, "RIGHT" },
-    { "Gewinn/Stück", 85, "RIGHT" }, { "Angebot", 55, "RIGHT" }, { "Wo", 100, "LEFT" } },
+  { { "Gegenstand", 0, "LEFT" }, { "Menge", 50, "RIGHT" }, { "Kosten", 95, "RIGHT" },
+    { "Gewinn", 110, "RIGHT" }, { "", 90, "CENTER" } },
+  { { "Gegenstand", 0, "LEFT" }, { "Händler", 85, "RIGHT" }, { "Auktion ab", 85, "RIGHT" },
+    { "Gewinn/Stück", 95, "RIGHT" }, { "Angebot", 55, "RIGHT" }, { "Wo", 110, "LEFT" } },
 }
 
 local KNOPF = { -- Zustand → Beschriftung, anklickbar
@@ -22,14 +23,14 @@ local KNOPF = { -- Zustand → Beschriftung, anklickbar
   offen = { "wartet", false }, laeuft = { "prüft...", false }, gekauft = { "gekauft", false },
 }
 
-local fenster, kopf, statusText, fussText
-local zeilen = {}
+local fenster, kopf, regler, zusammenText, leerText, fussText, bedienung
+local zeilen, haken = {}, {}
 local liste = {}
 local blatt, versatz = 1, 0
 local Zeile -- legt Zeilen bei Bedarf an (weiter unten)
 
 local function Grau(text) return "|cff808080" .. text .. "|r" end
-local function Gruen(text) return "|cff40ff40" .. text .. "|r" end
+local function Gruen(text) return "|cff33ff33" .. text .. "|r" end
 
 ---------------------------------------------------------------- Inhalt
 
@@ -46,25 +47,35 @@ local function ListeBauen()
   liste = neu
 end
 
-local function StatusZeile()
+-- Zusammenfassung, Hinweis für die leere Liste und Fußzeile
+local function Texte()
+  local b = ns.db.bilanz
+  local fuss = ("Bilanz: ausgegeben %s, beim Händler erlöst %s"):format(hp.Money(b.ausgegeben), hp.Money(b.erloest))
+  local offen = ns.OffeneTeile()
+  if offen > 0 then fuss = fuss .. (" · noch zu verkaufen: %d Teile"):format(offen) end
+
   local scan = ns.scan
   if scan then
     if scan.phase == "liste" then
-      return ("Lese das Auktionshaus: %d Gegenstände..."):format(ns.zahl.zeilen)
+      return "Lese das Auktionshaus", ("%d Gegenstände gelesen."):format(ns.zahl.zeilen), fuss
     end
-    return ("Lade Händlerpreise: noch %d..."):format(
-      (scan.anzahlWartet or 0) + math.max(0, #(scan.ids or {}) - (scan.pos or 1) + 1))
+    return "Lade Händlerpreise", ("Noch %d Gegenstände."):format(
+      (scan.anzahlWartet or 0) + math.max(0, #(scan.ids or {}) - (scan.pos or 1) + 1)), fuss
   end
   if not ns.letzterScan then
-    return ns.ahOffen and "»Scannen« liest das Auktionshaus (etwa eine halbe Minute)."
-      or "Öffne das Auktionshaus und drücke »Scannen«."
+    local wie = hp.PriceSource() == "scan" and "»Scannen« liest das Auktionshaus (etwa eine halbe Minute)."
+      or "»Auswerten« nimmt die Preise aus dem letzten Auctionator-Scan."
+    return "Noch nicht ausgewertet", (ns.ahOffen and "" or "Öffne das Auktionshaus.\n") .. wie, fuss
   end
+
+  fuss = ("%d Gegenstände gelesen · "):format(ns.letzterScan.zeilen) .. fuss
+  if ns.zahl.ohnePreis > 0 then fuss = fuss .. (" · %d ohne Händlerpreis"):format(ns.zahl.ohnePreis) end
   if blatt == 2 then
     if #ns.haendlerware == 0 then
-      return "Keine Händlerware mit Gewinn. Das Addon lernt Händlerpreise bei jedem Händlerbesuch."
+      return "Keine Händlerware mit Gewinn", "Das Addon lernt Händlerpreise bei jedem Händlerbesuch.", fuss
     end
-    return ("%d Waren kosten beim Händler weniger, als sie im Auktionshaus bringen (5 %% Gebühr abgezogen).")
-      :format(#ns.haendlerware)
+    return ("|cff33ff33%d|r Waren beim Händler billiger als im Auktionshaus (5 %% Gebühr abgezogen)")
+      :format(#ns.haendlerware), "", fuss
   end
   local bereit, gewinn, wartet = 0, 0, 0
   for _, g in ipairs(ns.geschaefte) do
@@ -74,40 +85,53 @@ local function StatusZeile()
       wartet = wartet + 1
     end
   end
-  local text = ("%d Gegenstände gelesen · %d Geschäfte bereit, Gewinn %s"):format(
-    ns.letzterScan.zeilen, bereit, ns.Geld(gewinn))
-  if wartet > 0 then text = text .. (" · %d werden noch geprüft"):format(wartet) end
-  if ns.zahl.ohnePreis > 0 then text = text .. (" · %d ohne Händlerpreis"):format(ns.zahl.ohnePreis) end
-  return text
+  local text = "Kein Geschäft bereit"
+  if bereit > 0 then
+    text = ("|cff33ff33%d|r Geschäft%s bereit, Gewinn |cff33ff33+|r%s"):format(
+      bereit, bereit == 1 and "" or "e", hp.Money(gewinn))
+  end
+  if wartet > 0 then text = text .. (" · %d werden geprüft"):format(wartet) end
+  return text, wartet == 0 and "Zurzeit liegt nichts unter dem Händlerpreis." or "", fuss
 end
 
-local function ZeileFuellen(zeile, e)
+-- Name in der Farbe des Links, ohne dessen eckige Klammern
+local function FarbName(e)
+  local farbe = e.link and e.link:match("^(|c.-)|H")
+  return farbe and (farbe .. (e.name or "?") .. "|r") or (e.name or "?")
+end
+
+local function ZeileFuellen(zeile, e, bester)
   zeile.eintrag = e
   zeile.bild:SetTexture(e.bild)
   local z = zeile.zellen
-  z[1]:SetText(e.link or e.name)
+  z[1]:SetText(FarbName(e))
+  local anteil = 0
   if blatt == 1 then
     if e.geprueft then
       z[2]:SetText(e.menge)
-      z[3]:SetText(ns.Geld(e.kosten))
-      z[4]:SetText(Gruen("+") .. ns.Geld(e.gewinn))
+      z[3]:SetText(hp.Money(e.kosten))
+      z[4]:SetText(Gruen("+") .. hp.Money(e.gewinn))
+      anteil = e.gewinn / bester
     else
       z[2]:SetText(Grau("?"))
-      z[3]:SetText(Grau("ab ") .. ns.Geld(e.ahPreis))
-      z[4]:SetText(Grau("bis ") .. ns.Geld(e.hoechstens))
+      z[3]:SetText(Grau("ab ") .. hp.Money(e.ahPreis))
+      z[4]:SetText(Grau("bis ") .. hp.Money(e.hoechstens))
     end
     local k = KNOPF[e.status] or KNOPF.offen
-    zeile.knopf:SetText(k[1])
-    zeile.knopf:SetEnabled(k[2] and ns.ahOffen and true or false)
+    zeile.knopf.label:SetText(k[1])
+    hp.ui.SetButtonEnabled(zeile.knopf, k[2] and ns.ahOffen)
     zeile.knopf:Show()
   else
-    z[2]:SetText(ns.Geld(e.haendler))
-    z[3]:SetText(ns.Geld(e.ah))
-    z[4]:SetText(Gruen("+") .. ns.Geld(e.marge))
+    z[2]:SetText(hp.Money(e.haendler))
+    z[3]:SetText(hp.Money(e.ah))
+    z[4]:SetText(Gruen("+") .. hp.Money(e.marge))
     z[5]:SetText(e.menge)
     z[6]:SetText((e.vorrat and e.vorrat >= 0 and "|cffff8040begrenzt|r " or "") .. (e.wer or ""))
+    anteil = e.marge / bester
     zeile.knopf:Hide()
   end
+  -- Balken im Hintergrund: Gewinn im Verhältnis zum besten Eintrag
+  zeile.balken:SetWidth(math.max(1, (zeile:GetWidth() or 0) * math.max(0, math.min(1, anteil))))
   zeile:Show()
 end
 
@@ -115,40 +139,46 @@ local function Zeichnen()
   ListeBauen()
   -- So viele Zeilen, wie in die aktuelle Fensterhöhe passen.
   local sichtbar = math.max(1, math.floor(((fenster:GetHeight() or 0) - OBEN - UNTEN) / ZEILENHOEHE))
-  versatz = math.max(0, math.min(versatz, #liste - sichtbar))
+  local weite = math.max(0, #liste - sichtbar)
+  versatz = math.max(0, math.min(versatz, weite))
+  local bester = 1
+  for _, e in ipairs(liste) do
+    local wert = blatt == 1 and (e.geprueft and e.gewinn or 0) or e.marge
+    if wert > bester then bester = wert end
+  end
   for i = 1, math.max(sichtbar, #zeilen) do
     local e = i <= sichtbar and liste[i + versatz]
-    if e then ZeileFuellen(Zeile(i), e) elseif zeilen[i] then zeilen[i]:Hide() end
+    if e then ZeileFuellen(Zeile(i), e, bester) elseif zeilen[i] then zeilen[i]:Hide() end
   end
-  statusText:SetText(StatusZeile())
-  local b = ns.db.bilanz
-  local fuss = ("Bilanz: ausgegeben %s, beim Händler erlöst %s"):format(ns.Geld(b.ausgegeben), ns.Geld(b.erloest))
-  local offen = ns.OffeneTeile()
-  if offen > 0 then fuss = fuss .. (" · noch zu verkaufen: %d Teile"):format(offen) end
-  if #liste > sichtbar then
-    fuss = fuss .. (" · Zeile %d-%d von %d (Mausrad)"):format(versatz + 1, math.min(versatz + sichtbar, #liste), #liste)
-  end
+  regler:SetMinMaxValues(0, weite)
+  regler:SetValue(versatz)
+  regler:SetShown(weite > 0)
+
+  local oben, leer, fuss = Texte()
+  zusammenText:SetText(oben)
+  leerText:SetText(#liste == 0 and leer or "")
   fussText:SetText(fuss)
-  fenster.scanKnopf:SetEnabled(ns.ahOffen and not ns.scan and not ns.kauf and true or false)
+  bedienung.Update()
+  for _, h in ipairs(haken) do h:SetChecked(ns.opt[h.schluessel]) end
 end
 
 -- Richtet die Zellen einer Zeile (oder des Kopfs) nach den Spalten der gewählten Liste aus.
--- Die Namensspalte bekommt die Breite, um die das Fenster breiter ist als ausgelegt.
 local function SpaltenFuer(ziel)
   local spalten = SPALTEN[blatt]
-  local mehr = math.max(0, (fenster:GetWidth() or BREITE) - BREITE)
-  local x = 28
+  local fest = 26 + 6
+  for i = 2, #spalten do fest = fest + spalten[i][2] + 4 end
+  local x = 26
   for i = 1, 6 do
     local zelle, spalte = ziel.zellen[i], spalten[i]
     if spalte then
-      local breite = spalte[2] + (i == 1 and mehr or 0)
+      local breite = i == 1 and math.max(120, (fenster:GetWidth() or 660) - 36 - fest) or spalte[2]
       zelle:ClearAllPoints()
       zelle:SetPoint("LEFT", ziel, "LEFT", x, 0)
       zelle:SetWidth(breite)
       zelle:SetJustifyH(spalte[3])
       zelle:Show()
       if ziel == kopf then zelle:SetText(spalte[1]) end
-      x = x + breite + 6
+      x = x + breite + 4
     else
       zelle:Hide()
     end
@@ -175,9 +205,7 @@ end
 local function Zellen(eltern, schrift)
   local zellen = {}
   for i = 1, 6 do
-    local zelle = eltern:CreateFontString(nil, "OVERLAY", schrift)
-    zelle:SetWordWrap(false)
-    zellen[i] = zelle
+    zellen[i] = hp.ui.Text(eltern, schrift)
   end
   return zellen
 end
@@ -199,8 +227,8 @@ local function Tipp(zeile)
   if e.link then GameTooltip:SetHyperlink(e.link) else GameTooltip:SetText(e.name or "?") end
   GameTooltip:AddLine(" ")
   if blatt == 1 then
-    GameTooltip:AddDoubleLine("Händler zahlt je Stück", ns.Geld(e.wert), 1, 1, 1, 1, 1, 1)
-    GameTooltip:AddDoubleLine("Auktionshaus ab", ns.Geld(e.ahPreis), 1, 1, 1, 1, 1, 1)
+    GameTooltip:AddDoubleLine("Händler zahlt je Stück", hp.Money(e.wert), 1, 1, 1, 1, 1, 1)
+    GameTooltip:AddDoubleLine("Auktionshaus ab", hp.Money(e.ahPreis), 1, 1, 1, 1, 1, 1)
     GameTooltip:AddLine("Kaufen, aus dem Briefkasten holen, beim Händler verkaufen.", 0.6, 0.6, 0.6, true)
   else
     GameTooltip:AddDoubleLine("Händler", (e.wer or "?") .. (e.wo ~= "" and (" (" .. e.wo .. ")") or ""), 1, 1, 1, 1, 1, 1)
@@ -216,26 +244,38 @@ end
 function Zeile(i)
   local zeile = zeilen[i]
   if zeile then return zeile end
+  local ui = hp.ui
   zeile = CreateFrame("Button", nil, fenster)
-  zeile:SetPoint("TOPLEFT", 8, -OBEN - (i - 1) * ZEILENHOEHE)
-  zeile:SetPoint("TOPRIGHT", -8, -OBEN - (i - 1) * ZEILENHOEHE)
   zeile:SetHeight(ZEILENHOEHE)
-  local streifen = zeile:CreateTexture(nil, "BACKGROUND")
-  streifen:SetAllPoints()
-  streifen:SetColorTexture(1, 1, 1, i % 2 == 0 and 0.04 or 0)
-  local leuchten = zeile:CreateTexture(nil, "HIGHLIGHT")
-  leuchten:SetAllPoints()
-  leuchten:SetColorTexture(1, 0.82, 0, 0.12)
+  zeile:SetPoint("TOPLEFT", fenster, "TOPLEFT", 12, -OBEN - (i - 1) * ZEILENHOEHE)
+  zeile:SetPoint("TOPRIGHT", fenster, "TOPRIGHT", -24, -OBEN - (i - 1) * ZEILENHOEHE)
+  if i % 2 == 0 then ui.Fill(zeile, "BACKGROUND", 1, 1, 1, 0.035) end
+
+  zeile.balken = zeile:CreateTexture(nil, "BORDER")
+  zeile.balken:SetPoint("TOPLEFT", zeile, "TOPLEFT", 0, -1)
+  zeile.balken:SetPoint("BOTTOMLEFT", zeile, "BOTTOMLEFT", 0, 1)
+  zeile.balken:SetColorTexture(0.2, 0.9, 0.3, 0.10)
+
   zeile.bild = zeile:CreateTexture(nil, "ARTWORK")
   zeile.bild:SetSize(18, 18)
-  zeile.bild:SetPoint("LEFT", 4, 0)
+  zeile.bild:SetPoint("LEFT", zeile, "LEFT", 3, 0)
+  zeile.bild:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+
   zeile.zellen = Zellen(zeile, "GameFontHighlightSmall")
-  zeile.knopf = CreateFrame("Button", nil, zeile, "UIPanelButtonTemplate")
-  zeile.knopf:SetSize(100, 20)
-  zeile.knopf:SetPoint("RIGHT", -4, 0)
+  zeile.zellen[1]:SetFontObject("GameFontHighlight")
+  zeile.zellen[4]:SetFontObject("GameFontHighlight")
+
+  local leuchten = zeile:CreateTexture(nil, "HIGHLIGHT")
+  leuchten:SetAllPoints()
+  leuchten:SetColorTexture(1, 0.82, 0, 0.10)
+
+  zeile.knopf = ui.FlatButton(zeile, 90, "", "CENTER")
+  zeile.knopf:SetHeight(18)
+  zeile.knopf:SetPoint("RIGHT", zeile, "RIGHT", -2, 0)
   zeile.knopf:SetScript("OnClick", function()
     if zeile.eintrag then ns.Kaufen(zeile.eintrag) end
   end)
+
   zeile:RegisterForClicks("LeftButtonUp")
   zeile:SetScript("OnEnter", Tipp)
   zeile:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -251,38 +291,82 @@ function Zeile(i)
   return zeile
 end
 
+local function Haken(text, schluessel, x)
+  local h = hp.ui.Check(fenster, text, x, function(an) ns.opt[schluessel] = an end)
+  h.schluessel = schluessel
+  haken[#haken + 1] = h
+end
+
 -- Baut die Listen als Rahmen im Händlerprofit-Fenster, unter dessen Titel und Reitern.
+-- Die Maße entsprechen dem Reiter »Herstellen«: Einstellungen, Zusammenfassung, Kopf, Liste, Fuß.
 function ns.FensterBauen(eltern)
   if fenster then return end
+  local ui = hp.ui
   local f = CreateFrame("Frame", "HaendlerprofitPreisanker", eltern)
   fenster = f
   f:SetPoint("TOPLEFT", eltern, "TOPLEFT", 0, -26)
   f:SetPoint("BOTTOMRIGHT", eltern, "BOTTOMRIGHT", 0, 0)
   f:Hide()
 
-  f.scanKnopf = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-  f.scanKnopf:SetSize(110, 22)
-  f.scanKnopf:SetPoint("TOPRIGHT", -12, -34)
-  f.scanKnopf:SetText("Scannen")
-  f.scanKnopf:SetScript("OnClick", function() ns.ScanStarten() end)
+  -- Einstellungen
+  Haken("Mit dem Auktionshaus öffnen", "mitAuktionshaus", 10)
+  Haken("Handelsware ohne zweiten Klick kaufen", "autoBestaetigen", 204)
 
-  statusText = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  statusText:SetPoint("TOPLEFT", 14, -39)
-  statusText:SetPoint("TOPRIGHT", -130, -39)
-  statusText:SetJustifyH("LEFT")
-  statusText:SetWordWrap(false)
+  -- Zusammenfassung mit Scan-Knopf und Preisquelle
+  local zusammen = CreateFrame("Frame", nil, f)
+  zusammen:SetPoint("TOPLEFT", f, "TOPLEFT", 12, -64)
+  zusammen:SetPoint("TOPRIGHT", f, "TOPRIGHT", -12, -64)
+  zusammen:SetHeight(26)
+  ui.Fill(zusammen, "BACKGROUND", 1, 1, 1, 0.04)
+  bedienung = ui.SourceControls(zusammen, true)
+  f.scanKnopf = bedienung.scan
+  zusammenText = ui.Text(zusammen, "GameFontHighlight")
+  zusammenText:SetPoint("LEFT", zusammen, "LEFT", 8, 0)
+  zusammenText:SetPoint("RIGHT", bedienung.text, "LEFT", -8, 0)
 
+  -- Spaltenköpfe
   kopf = CreateFrame("Frame", nil, f)
-  kopf:SetPoint("TOPLEFT", 8, -64)
-  kopf:SetPoint("TOPRIGHT", -8, -64)
-  kopf:SetHeight(18)
+  kopf:SetHeight(20)
+  kopf:SetPoint("TOPLEFT", f, "TOPLEFT", 12, -96)
+  kopf:SetPoint("TOPRIGHT", f, "TOPRIGHT", -24, -96)
   kopf.zellen = Zellen(kopf, "GameFontNormalSmall")
+  local linie = f:CreateTexture(nil, "ARTWORK")
+  linie:SetColorTexture(0.35, 0.30, 0.15, 1)
+  linie:SetHeight(1)
+  linie:SetPoint("TOPLEFT", f, "TOPLEFT", 12, -117)
+  linie:SetPoint("TOPRIGHT", f, "TOPRIGHT", -12, -117)
 
-  fussText = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  fussText:SetPoint("BOTTOMLEFT", 14, 11)
-  fussText:SetPoint("BOTTOMRIGHT", -26, 11)
-  fussText:SetJustifyH("LEFT")
-  fussText:SetWordWrap(false)
+  -- Schmaler Rollbalken
+  regler = CreateFrame("Slider", nil, f)
+  regler:SetOrientation("VERTICAL")
+  regler:SetWidth(8)
+  regler:SetPoint("TOPRIGHT", f, "TOPRIGHT", -10, -OBEN)
+  regler:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -10, UNTEN)
+  ui.Fill(regler, "BACKGROUND", 1, 1, 1, 0.05)
+  local griff = regler:CreateTexture(nil, "ARTWORK")
+  griff:SetColorTexture(0.6, 0.5, 0.2, 0.9)
+  griff:SetSize(8, 40)
+  regler:SetThumbTexture(griff)
+  regler:SetMinMaxValues(0, 0)
+  regler:SetValueStep(1)
+  regler:SetValue(0)
+  regler:SetScript("OnValueChanged", function(_, wert)
+    local neu = math.floor((wert or 0) + 0.5)
+    if neu ~= versatz then
+      versatz = neu
+      ns.Neu()
+    end
+  end)
+
+  leerText = ui.Text(f, "GameFontDisable", "CENTER")
+  leerText:SetPoint("TOPLEFT", f, "TOPLEFT", 60, -190)
+  leerText:SetPoint("TOPRIGHT", f, "TOPRIGHT", -60, -190)
+  if leerText.SetWordWrap then leerText:SetWordWrap(true) end
+
+  -- Fußzeile
+  fussText = ui.Text(f, "GameFontDisableSmall")
+  fussText:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 14, 11)
+  fussText:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -26, 11)
 
   f:EnableMouseWheel(true)
   f:SetScript("OnMouseWheel", function(_, richtung)
@@ -329,7 +413,7 @@ local function AnAus(wert) return wert and "an" or "aus" end
 
 local HILFE = {
   "/pa - Fenster zeigen oder verbergen",
-  "/pa scan - Auktionshaus lesen (muss offen sein)",
+  "/pa scan - Auktionshaus lesen oder Auctionator-Preise auswerten (muss offen sein)",
   "/pa min 2s - kleinster Gewinn je Geschäft (g, s, k)",
   "/pa stapel 20 - so viele Stapel einer Handelsware höchstens auf einmal",
   "/pa auto - Handelsware ohne zweiten Klick kaufen, wenn der Preis stimmt (an/aus)",

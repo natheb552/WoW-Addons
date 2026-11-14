@@ -139,6 +139,7 @@ local function FreshLimit()
   local scanDays = math.floor((time() - day0) / 86400) - math.floor((last - day0) / 86400)
   return scanDays + 1
 end
+ns.FreshLimit = FreshLimit
 
 -- ---------------------------------------------------------------- Gelernte Rezepte
 
