@@ -99,6 +99,19 @@ local function NameLinkBild(itemID)
   return name or ("Gegenstand " .. itemID), link, bild
 end
 
+-- Holt Namen, Link und Bild nach, wenn der Gegenstand beim Auswerten noch nicht geladen war
+-- (sonst bliebe »Gegenstand 1234« stehen).
+function ns.NameNachladen(e)
+  if e.link or not e.itemID then return end
+  local name, link, _, _, _, _, _, _, _, bild = C_Item.GetItemInfo(e.itemID)
+  if name then
+    e.name, e.link, e.bild = name, link, bild
+  elseif not e.angefragt then
+    e.angefragt = true
+    C_Item.RequestLoadItemDataByID(e.itemID)
+  end
+end
+
 ---------------------------------------------------------------- 3. Einzelprüfung
 
 local aktuell        -- { g = Geschäft, gesendet = Zeit } der laufenden Einzelsuche
@@ -145,6 +158,9 @@ local function ErgebnisLose(itemKey)
     g = aktuell.g
   end
   if not g or (ns.kauf and ns.kauf.g == g) then return end
+  -- Das Spiel meldet Ergebnisse doppelt; bei Zeilen aus Auctionator zählt nur die laufende Suche,
+  -- sonst würde die zweite Meldung den Wechsel der Suchart überholen.
+  if g.ohneStufe and not (aktuell and aktuell.g == g) then return end
   local lose = {}
   for i = 1, AH.GetNumItemSearchResults(itemKey) do
     local r = AH.GetItemSearchResultInfo(itemKey, i)
@@ -160,6 +176,11 @@ local function ErgebnisLose(itemKey)
         wert = wert, anzahl = math.max(1, r.quantity or 1), link = r.itemLink,
       }
     end
+  end
+  if g.ohneStufe and not g.einfachSuchen and AH.GetNumItemSearchResults(itemKey) == 0 then
+    -- Nichts gefunden, obwohl Auctionator den Gegenstand gesehen hat: andere Suchart probieren.
+    g.einfachSuchen, g.status = true, "offen"
+    return Fertig(g)
   end
   g.art, g.geprueft = "los", true
   g.lose, g.kosten, g.gewinn, g.menge = ns.Lose(lose)
@@ -178,7 +199,8 @@ ns.Bei("ITEM_SEARCH_RESULTS_UPDATED", ErgebnisLose)
 -- Schlüssel (Stufe, Zufallsverzauberung): Einzelstücke brauchen dann die Suche über alle Ausführungen.
 local function Suchen(g)
   local ware = Enum.ItemCommodityStatus and Enum.ItemCommodityStatus.Commodity or 2
-  if g.ohneStufe and AH.SendSellSearchQuery
+  -- Bringt die Suche über alle Ausführungen nichts, versucht es der zweite Anlauf mit der einfachen.
+  if g.ohneStufe and not g.einfachSuchen and AH.SendSellSearchQuery
       and (AH.GetItemCommodityStatus and AH.GetItemCommodityStatus(g.itemID)) ~= ware then
     AH.SendSellSearchQuery(g.key, SORT_KAUF, false)
   else
@@ -195,6 +217,7 @@ local function Pruefen()
     local g = aktuell.g
     g.versuche = (g.versuche or 0) + 1
     g.status = g.versuche < 2 and "offen" or "weg"
+    if g.ohneStufe then g.einfachSuchen = not g.einfachSuchen end
     aktuell = nil
     ns.Neu()
   end
@@ -352,6 +375,9 @@ local function PreisGeladen(itemID, erfolg)
 end
 
 ns.Bei("GET_ITEM_INFO_RECEIVED", PreisGeladen)
+ns.Bei("GET_ITEM_INFO_RECEIVED", function()
+  if not ns.scan then ns.Neu() end -- nachgeladene Namen zeigen
+end)
 ns.Bei("ITEM_DATA_LOAD_RESULT", PreisGeladen)
 
 ---------------------------------------------------------------- 1. Überblick
@@ -403,9 +429,11 @@ ns.Bei("AUCTION_HOUSE_BROWSE_FAILURE", function()
   end
 end)
 
--- Überblick aus der Preisdatenbank von Auctionator: je Gegenstand der zuletzt gesehene
--- billigste Preis. Nur Preise aus dessen letztem Scan, sonst kämen längst verkaufte
--- Auktionen in die Liste. Liefert nil, wenn Auctionator fehlt.
+-- Überblick aus der Preisdatenbank von Auctionator: je Gegenstand der billigste Preis des
+-- letzten Tages, an dem er gesehen wurde. Das Feld m taugt dafür nicht: bei Gegenständen mit
+-- mehreren Ausführungen steht dort der Preis der zuletzt gelesenen Ausführung, nicht der billigste.
+-- Nur Preise aus dem letzten Scan, sonst kämen längst verkaufte Auktionen in die Liste.
+-- Liefert nil, wenn Auctionator fehlt.
 local function AusAuctionator()
   local daten = Auctionator and Auctionator.Database and Auctionator.Database.db
   if type(daten) ~= "table" then return nil end
@@ -422,12 +450,15 @@ local function AusAuctionator()
         tag = tonumber(tag)
         if tag and (not letzter or tag > letzter) then letzter = tag end
       end
-      if letzter and heute - letzter <= grenze then
+      local t = tostring(letzter)
+      -- l = Tagestief, nur gespeichert, wenn es unter dem Tageshoch h liegt
+      local preis = letzter and ((type(e.l) == "table" and e.l[t]) or e.h[t]) or 0
+      if letzter and heute - letzter <= grenze and preis > 0 then
         local key = AH.MakeItemKey and AH.MakeItemKey(itemID)
           or { itemID = itemID, itemLevel = 0, itemSuffix = 0, battlePetSpeciesID = 0 }
-        local menge = type(e.a) == "table" and e.a[tostring(letzter)] or 1
+        local menge = type(e.a) == "table" and e.a[t] or 1
         zeilen[ns.Schluessel(key)] = {
-          key = key, itemID = itemID, preis = e.m, menge = math.max(1, menge), ohneStufe = true,
+          key = key, itemID = itemID, preis = preis, menge = math.max(1, menge), ohneStufe = true,
         }
         zahl = zahl + 1
       end

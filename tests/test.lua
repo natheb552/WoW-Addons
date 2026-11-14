@@ -358,7 +358,9 @@ S.Warten(1)
 for _, z in ipairs(S.markt) do
   if z.key.itemID == 100 then z.stufen = { { preis = 10, menge = 100 } } end
   if z.key.itemID == 200 then z.lose = { { auctionID = 21, preis = 300, link = S.Link(200, "Banditenhandschuhe des Affen") } } end
+  if z.key.itemID == 301 then z.lose = { { auctionID = 22, preis = 40, link = S.Link(301, "Rezept: Trank") } } end
 end
+S.verkaufsSucheLeer = { [301] = true } -- hier hilft nur die einfache Suche
 local tag = math.floor((time() - 1577833200) / 86400)
 local function Eintrag(preis, menge, alter)
   local t = tostring(tag - (alter or 0))
@@ -369,7 +371,9 @@ Auctionator = {
   SavedState = { TimeOfLastBrowseScan = time() },
   Database = { db = {
     version = 2,
-    ["100"] = Eintrag(10, 100),      -- Leder unter dem Händlerpreis 50
+    ["100"] = { m = 45, h = { [tostring(tag)] = 45 }, l = { [tostring(tag)] = 10 }, a = { [tostring(tag)] = 100 } },
+                                     -- Leder: zuletzt gesetzter Preis 45, Tagestief 10 (Händler zahlt 50)
+    ["301"] = Eintrag(40, 1),        -- Rezept unter dem Händlerpreis 100
     ["200"] = Eintrag(300, 1),       -- Handschuhe: Einzelstück, nur die Gegenstandsnummer bekannt
     ["g:200:10"] = Eintrag(300, 1),  -- derselbe Gegenstand je Stufe: wird übergangen
     ["101"] = Eintrag(30, 100),      -- teurer als beim Händler
@@ -379,11 +383,15 @@ Auctionator = {
 }
 HaendlerprofitDB.priceSource = "auctionator"
 ns.db.preise[100] = 777
+SlashCmdList.PREISANKER("min 50k")
 ns.ScanStarten()
 gleich(ns.scan and ns.scan.phase, "preise", "Auctionator: kein Lesen des Auktionshauses nötig")
 S.Warten(20)
 gleich(ns.scan, nil, "Auctionator: Auswertung beendet")
-gleich(ns.letzterScan.zeilen, 4, "Auctionator: nur aktuelle Preise mit Gegenstandsnummer")
+gleich(ns.letzterScan.zeilen, 5, "Auctionator: nur aktuelle Preise mit Gegenstandsnummer")
+gleich(ns.zeilen["100:0:0"].preis, 10, "Auctionator: Tagestief statt des zuletzt gesetzten Preises")
+gleich(geschaeft(301).status, "bereit", "Auctionator: zweite Suchart, wenn die erste nichts findet")
+gleich(geschaeft(301).gewinn, 60, "Auctionator: Rezept Gewinn")
 gleich(geschaeft(103), nil, "Auctionator: alter Preis bleibt weg")
 gleich(ns.db.preise[100], 777, "Auctionator: Preise des eigenen Scans bleiben unberührt")
 leder, handschuhe = geschaeft(100), geschaeft(200)

@@ -11,8 +11,8 @@ local OBEN, UNTEN = 120, 34 -- Platz 체ber und unter den Zeilen, wie im Reiter �
 -- Spalten je Liste: Titel, Breite, Ausrichtung. Die erste nimmt den Platz, der 체brig bleibt.
 -- Die letzte Spalte der ersten Liste ist der Knopf.
 local SPALTEN = {
-  { { "Gegenstand", 0, "LEFT" }, { "Menge", 50, "RIGHT" }, { "Kosten", 95, "RIGHT" },
-    { "Gewinn", 110, "RIGHT" }, { "", 90, "CENTER" } },
+  { { "Gegenstand", 0, "LEFT" }, { "Menge", 45, "RIGHT" }, { "Kosten", 90, "RIGHT" },
+    { "Gewinn", 150, "RIGHT" }, { "", 90, "CENTER" } },
   { { "Gegenstand", 0, "LEFT" }, { "H채ndler", 85, "RIGHT" }, { "Auktion ab", 85, "RIGHT" },
     { "Gewinn/St체ck", 95, "RIGHT" }, { "Angebot", 55, "RIGHT" }, { "Wo", 110, "LEFT" } },
 }
@@ -101,6 +101,7 @@ local function FarbName(e)
 end
 
 local function ZeileFuellen(zeile, e, bester)
+  ns.NameNachladen(e)
   zeile.eintrag = e
   zeile.bild:SetTexture(e.bild)
   local z = zeile.zellen
@@ -114,8 +115,9 @@ local function ZeileFuellen(zeile, e, bester)
       anteil = e.gewinn / bester
     else
       z[2]:SetText(Grau("?"))
+      -- Noch nicht nachgeschlagen: bekannt ist nur der billigste Preis, nicht die Menge dazu.
       z[3]:SetText(Grau("ab ") .. hp.Money(e.ahPreis))
-      z[4]:SetText(Grau("bis ") .. hp.Money(e.hoechstens))
+      z[4]:SetText(Grau("je St체ck bis +") .. hp.Money(e.wert - e.ahPreis))
     end
     local k = KNOPF[e.status] or KNOPF.offen
     zeile.knopf.label:SetText(k[1])

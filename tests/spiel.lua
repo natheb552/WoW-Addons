@@ -182,6 +182,8 @@ local function Drossel(kauf)
   end)
 end
 
+-- S.verkaufsSucheLeer[itemID]: die Suche über alle Ausführungen findet hier nichts.
+local leereSuche = {}
 -- Nach einer Suche über alle Ausführungen (SendSellSearchQuery) zählt nur die Gegenstandsnummer.
 local alleAusfuehrungen = {}
 local function MarktZeile(key)
@@ -250,6 +252,7 @@ end
 function C_AuctionHouse.SendSearchQuery(key, sorts, getrennt)
   assert(type(sorts) == "table" and getrennt == false)
   Drossel()
+  leereSuche[key.itemID] = nil
   local z = MarktZeile(key)
   if S.stumm and S.stumm[key.itemID] then return end
   C_Timer.After(0.2, function()
@@ -263,9 +266,11 @@ function C_AuctionHouse.SendSearchQuery(key, sorts, getrennt)
   end)
 end
 function C_AuctionHouse.SendSellSearchQuery(key, sorts, getrennt)
-  alleAusfuehrungen[key.itemID] = true
+  local leer = S.verkaufsSucheLeer and S.verkaufsSucheLeer[key.itemID]
+  if not leer then alleAusfuehrungen[key.itemID] = true end
   S.verkaufsSuchen = (S.verkaufsSuchen or 0) + 1
   C_AuctionHouse.SendSearchQuery(key, sorts, getrennt)
+  leereSuche[key.itemID] = leer or nil
 end
 function C_AuctionHouse.MakeItemKey(itemID)
   return { itemID = itemID, itemLevel = 0, itemSuffix = 0, battlePetSpeciesID = 0 }
@@ -294,6 +299,7 @@ function C_AuctionHouse.GetCommoditySearchResultInfo(itemID, i)
   }
 end
 function C_AuctionHouse.GetNumItemSearchResults(key)
+  if leereSuche[key.itemID] then return 0 end
   local z = MarktZeile(key)
   return z and #(z.lose or {}) or 0
 end
