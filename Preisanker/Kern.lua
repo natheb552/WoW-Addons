@@ -69,18 +69,22 @@ function ns.Handelsware(stufen, haendlerPreis, maxMenge, maxKosten)
   return menge, kosten, menge * haendlerPreis - kosten
 end
 
--- Einzelstücke: Lose {preis=Sofortkauf, wert=Händlerpreis des Loses, ...}.
--- Behält nur Lose mit Gewinn, die teuersten Gewinne zuerst.
+-- Einzelstücke: Lose {preis=Sofortkauf je Stück, wert=Händlerpreis je Stück, anzahl=Stücke, ...}.
+-- Das Auktionshaus fasst gleiche Auktionen zu einer Zeile zusammen: der Preis gilt je Stück,
+-- ein Kauf holt genau ein Stück.
+-- Behält nur Lose mit Gewinn, die größten Gewinne je Stück zuerst.
+-- Liefert die Lose, Gesamtkosten, Gesamtgewinn und die Stückzahl.
 function ns.Lose(lose)
-  local gut, kosten, gewinn = {}, 0, 0
+  local gut, kosten, gewinn, stueck = {}, 0, 0, 0
   for _, los in ipairs(lose) do
     if los.preis > 0 and los.wert > los.preis then
+      local n = los.anzahl or 1
       gut[#gut + 1] = los
-      kosten, gewinn = kosten + los.preis, gewinn + (los.wert - los.preis)
+      kosten, gewinn, stueck = kosten + los.preis * n, gewinn + (los.wert - los.preis) * n, stueck + n
     end
   end
   table.sort(gut, function(a, b) return (a.wert - a.preis) > (b.wert - b.preis) end)
-  return gut, kosten, gewinn
+  return gut, kosten, gewinn, stueck
 end
 
 -- Händlerware: Gewinn je Stück, wenn man beim Händler kauft und zum billigsten

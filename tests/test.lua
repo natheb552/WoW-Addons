@@ -58,6 +58,10 @@ do -- Lose: nur mit Gewinn, bester zuerst
   local gut, k, g = ns.Lose({ { preis = 900, wert = 1000 }, { preis = 1000, wert = 1000 }, { preis = 200, wert = 1000 }, { preis = 0, wert = 50 } })
   gleich(#gut, 2, "Lose Anzahl"); gleich(gut[1].preis, 200, "Lose Reihenfolge")
   gleich(k, 1100, "Lose Kosten"); gleich(g, 900, "Lose Gewinn")
+  -- Zusammengefasste Zeile: Preis und Wert gelten je Stück.
+  local _, k5, g5, n5 = ns.Lose({ { preis = 800, wert = 1000, anzahl = 5 } })
+  gleich(k5, 4000, "Lose mit Anzahl: Kosten"); gleich(g5, 1000, "Lose mit Anzahl: Gewinn")
+  gleich(n5, 5, "Lose mit Anzahl: Stück")
 end
 gleich(ns.HaendlerMarge(200, 100), 90, "Händlermarge mit Gebühr")
 gleich(ns.HaendlerMarge(105, 100), -1, "Händlermarge knapp negativ")

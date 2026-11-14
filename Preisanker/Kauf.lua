@@ -34,8 +34,7 @@ local function LosEntfernen(g, los)
   for i, l in ipairs(g.lose) do
     if l == los then table.remove(g.lose, i) break end
   end
-  g.lose, g.kosten, g.gewinn = ns.Lose(g.lose)
-  g.menge = #g.lose
+  g.lose, g.kosten, g.gewinn, g.menge = ns.Lose(g.lose)
   g.status = g.menge > 0 and "bereit" or "gekauft"
 end
 
@@ -121,9 +120,17 @@ ns.Bei("AUCTION_HOUSE_PURCHASE_COMPLETED", function(auctionID)
   local kauf = ns.kauf
   if not (kauf and kauf.art == "los" and kauf.los.auctionID == auctionID) then return end
   local g, los = kauf.g, kauf.los
-  Verbuchen(g, ns.NameAusLink(los.link), los.anzahl or 1, los.preis)
+  -- Ein Kauf holt ein Stück, auch wenn die Zeile mehrere gleiche Auktionen zusammenfasst.
+  Verbuchen(g, ns.NameAusLink(los.link), 1, los.preis)
   ns.kauf = nil
-  LosEntfernen(g, los)
+  if (los.anzahl or 1) > 1 then
+    -- Die übrigen Stücke haben eine andere Auktionsnummer: neu nachschlagen.
+    los.anzahl = los.anzahl - 1
+    g.lose, g.kosten, g.gewinn, g.menge = ns.Lose(g.lose)
+    ns.NeuPruefen(g)
+  else
+    LosEntfernen(g, los)
+  end
   ns.Neu()
 end)
 

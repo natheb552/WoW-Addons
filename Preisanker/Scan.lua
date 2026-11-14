@@ -148,13 +148,12 @@ local function ErgebnisLose(itemKey)
       end
       lose[#lose + 1] = {
         auctionID = r.auctionID, preis = r.buyoutAmount,
-        wert = wert * (r.quantity or 1), anzahl = r.quantity or 1, link = r.itemLink,
+        wert = wert, anzahl = math.max(1, r.quantity or 1), link = r.itemLink,
       }
     end
   end
   g.art, g.geprueft = "los", true
-  g.lose, g.kosten, g.gewinn = ns.Lose(lose)
-  g.menge = #g.lose
+  g.lose, g.kosten, g.gewinn, g.menge = ns.Lose(lose)
   if g.lose[1] and g.lose[1].link then
     g.link = g.lose[1].link
     g.name = ns.NameAusLink(g.link) or g.name

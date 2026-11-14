@@ -273,7 +273,7 @@ end
 function C_AuctionHouse.GetItemSearchResultInfo(key, i)
   local l = MarktZeile(key).lose[i]
   return l and {
-    itemKey = key, auctionID = l.auctionID, quantity = 1, itemLink = l.link,
+    itemKey = key, auctionID = l.auctionID, quantity = l.anzahl or 1, itemLink = l.link,
     buyoutAmount = l.preis, containsOwnerItem = l.eigen or false, owners = {},
   }
 end
@@ -325,7 +325,12 @@ function C_AuctionHouse.PlaceBid(auctionID, betrag)
       for i, l in ipairs(z.lose or {}) do
         if l.auctionID == auctionID and not l.schonWeg then
           assert(l.preis == betrag, "Gebot weicht vom Sofortkaufpreis ab")
-          table.remove(z.lose, i)
+          -- Zusammengefasste Zeile: ein Stück weg, der Rest bekommt eine neue Auktionsnummer.
+          if (l.anzahl or 1) > 1 then
+            l.anzahl, l.auctionID = l.anzahl - 1, l.auctionID + 10000
+          else
+            table.remove(z.lose, i)
+          end
           S.geld = S.geld - betrag
           return S.Ereignis("AUCTION_HOUSE_PURCHASE_COMPLETED", auctionID)
         end
