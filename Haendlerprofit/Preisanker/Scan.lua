@@ -100,15 +100,18 @@ local function NameLinkBild(itemID)
 end
 
 -- Holt Namen, Link und Bild nach, wenn der Gegenstand beim Auswerten noch nicht geladen war
--- (sonst bliebe »Gegenstand 1234« stehen).
+-- (sonst bliebe »Gegenstand 1234« stehen). Jeder Gegenstand wird höchstens dreimal gefragt:
+-- schon die Frage löst beim Spiel eine Anfrage aus, deren Antwort wieder neu zeichnen lässt.
+-- Ohne Grenze liefe das bei Gegenständen, die nie laden, als Dauerschleife.
 function ns.NameNachladen(e)
-  if e.link or not e.itemID then return end
+  if e.link or not e.itemID or (e.nameGefragt or 0) >= 3 then return end
+  e.nameGefragt = (e.nameGefragt or 0) + 1
   local name, link, _, _, _, _, _, _, _, bild = C_Item.GetItemInfo(e.itemID)
   if name then
     e.name, e.link, e.bild = name, link, bild
-  elseif not e.angefragt then
-    e.angefragt = true
-    C_Item.RequestLoadItemDataByID(e.itemID)
+  else
+    ns.wartetAufNamen = true
+    if e.nameGefragt == 1 then C_Item.RequestLoadItemDataByID(e.itemID) end
   end
 end
 
@@ -376,7 +379,12 @@ end
 
 ns.Bei("GET_ITEM_INFO_RECEIVED", PreisGeladen)
 ns.Bei("GET_ITEM_INFO_RECEIVED", function()
-  if not ns.scan then ns.Neu() end -- nachgeladene Namen zeigen
+  -- Nachgeladene Namen zeigen. Das Ereignis kommt im Spiel ständig (auch für andere Addons):
+  -- nur neu zeichnen, wenn hier wirklich ein Name fehlt.
+  if ns.wartetAufNamen and not ns.scan then
+    ns.wartetAufNamen = false
+    ns.Neu()
+  end
 end)
 ns.Bei("ITEM_DATA_LOAD_RESULT", PreisGeladen)
 
