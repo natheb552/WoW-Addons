@@ -1,0 +1,12 @@
+## Interface: 16001
+## Title: Händlerprofit
+## Notes: Zeigt herstellbare Gegenstände, die sich mit Gewinn beim Händler verkaufen lassen (Preise aus Auctionator).
+## Author: Xehira
+## Version: 1.0
+## OptionalDeps: Auctionator
+## SavedVariables: HaendlerprofitDB
+## SavedVariablesPerCharacter: HaendlerprofitCharDB
+
+Data.lua
+Core.lua
+UI.lua
